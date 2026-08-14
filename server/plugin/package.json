@@ -1,0 +1,26 @@
+{
+  "name": "dsh-plugin-mobile-remote",
+  "version": "0.1.0",
+  "description": "Mobile remote control for DeepSeek Harness: password auth proxy + tunnel + workspace browse fix",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dependencies": {
+    "qrcode-terminal": "^0.12.0",
+    "zod": "^4.3.6"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "license": "MIT"
+}

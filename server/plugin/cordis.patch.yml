@@ -10,5 +10,5 @@
     surfaceContext: true
     trustedHosts:
       - dsh.remote
-      # 隧道域名（每次 cloudflared 重启会变；start-dsh.ps1 会在隧道变化时同步更新此项）
-      - xxx.trycloudflare.com
+      # 隧道域名：start-dsh.ps1 会在隧道变化时自动更新此处；
+      # 未配置时远程浏览器部分设置 UI 受限（可用 apply-isloopback-patch.ps1 解除）

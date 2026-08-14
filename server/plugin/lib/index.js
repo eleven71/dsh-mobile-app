@@ -86,9 +86,9 @@ export function apply(ctx, config) {
         upstreamPort: config.upstreamPort,
         user,
         password,
-        onLog: (line) => console.log('[mobile-remote] ' + line),
+        onError: (msg) => log(msg),
       })
-      log(`认证代理已启动：0.0.0.0:${config.proxyPort} → 127.0.0.1:${config.upstreamPort}（凭证：${user}/${password}）`)
+      log(`认证代理已启动：0.0.0.0:${config.proxyPort} → 127.0.0.1:${config.upstreamPort}（用户：${user}，密码见配置，勿外泄）`)
     } catch (e) {
       log(`认证代理启动失败：${e.message}`)
       proxyServer = null
@@ -107,7 +107,7 @@ export function apply(ctx, config) {
             if (m && !url) {
               url = m[0] + '/mobile'
               log(`隧道已就绪（手机端）：${url}`)
-              log(`凭证：${user}/${password}（可在插件配置中修改，见 README）`)
+              log(`登录用户：${user}（密码在插件配置中，勿外泄）`)
               printQr(url, log)
             }
             if (text.includes('ERR')) log('隧道: ' + text.trim().split('\n')[0])

@@ -5,6 +5,14 @@
 # Usage: double-click; tunnel auto-reconnects and re-syncs DNS on every new domain.
 
 $ErrorActionPreference = 'Continue'
+
+# ---- single-instance guard: only one start-dsh.ps1 loop may run at a time ----
+$MUTEX = New-Object System.Threading.Mutex($false, 'DSH-Remote-StartScript')
+if (-not $MUTEX.WaitOne(0)) {
+  Write-Host '[start-dsh] another instance is already running (single-instance lock). Exiting.' -ForegroundColor Red
+  exit 1
+}
+
 $CF = 'C:\Program Files (x86)\cloudflared\cloudflared.exe'
 $CONFIG = Join-Path $PSScriptRoot 'dsh-config.txt'
 $LOG = Join-Path $PSScriptRoot 'quick-tunnel.log'
@@ -58,6 +66,19 @@ if (-not (Get-NetTCPConnection -LocalPort 3080 -State Listen -ErrorAction Silent
 Write-Host '[start-dsh] starting tunnel, watching for domain...' -ForegroundColor Cyan
 $lastDomain = ''
 while ($true) {
+  # ---- kill the tunnel this loop started last round, plus any leftover DSH tunnels ----
+  if ($proc -and -not $proc.HasExited) {
+    Write-Host ('[start-dsh] killing previous tunnel pid {0}' -f $proc.Id) -ForegroundColor Yellow
+    Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+  }
+  Get-CimInstance Win32_Process -Filter "Name='cloudflared.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -match 'tunnel' -and $_.CommandLine -match '--url' -and $_.CommandLine -match '8082' } |
+    ForEach-Object {
+      Write-Host ('[start-dsh] killing leftover tunnel pid {0}' -f $_.ProcessId) -ForegroundColor Yellow
+      Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+  Start-Sleep -Milliseconds 500
+
   Remove-Item $LOG -ErrorAction SilentlyContinue
   Remove-Item "$LOG.out" -ErrorAction SilentlyContinue
   $proc = Start-Process -FilePath $CF -ArgumentList 'tunnel','--url','http://127.0.0.1:8082' `
@@ -74,7 +95,18 @@ while ($true) {
           if ($domain -ne $lastDomain) {
             Update-Dnshe -Cname $domain
             $lastDomain = $domain
-            Write-Host ('[start-dsh] PHONE URL: https://' + $DOMAIN + '/mobile (APP fills ' + $DOMAIN + ', auto-discovery)') -ForegroundColor Green
+            # sync current tunnel domain into plugin trustedHosts (cordis.patch.yml),
+            # so remote browsers pass the frontend trust fence (settings UI available)
+            $patchPath = Join-Path $PSScriptRoot '..\plugin\cordis.patch.yml'
+            if (Test-Path $patchPath) {
+              $patch = Get-Content $patchPath -Raw -Encoding UTF8
+              if ($patch -notmatch [regex]::Escape($domain)) {
+                $patch = $patch -replace '(\s+- dsh\.remote)', "`$1`n      - $domain"
+                Set-Content $patchPath -Value $patch -Encoding UTF8 -NoNewline
+                Write-Host ('[start-dsh] trustedHosts + ' + $domain) -ForegroundColor DarkGray
+              }
+            }
+            Write-Host ('[start-dsh] PHONE URL: https://' + $domain + ' (fixed domain https://' + $DOMAIN + ' when DNSHE is healthy)') -ForegroundColor Green
           }
         }
       }
