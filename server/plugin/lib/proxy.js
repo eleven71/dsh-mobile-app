@@ -57,9 +57,15 @@ export function createAuthProxy({ port, upstreamPort, user = 'dsh', password, on
       res.end('401 Unauthorized')
       return
     }
-    // 移动 UI：/mobile 路径直接 serve 静态文件（不走转发）
+    // 移动 UI：/mobile 路径直接 serve 静态文件（不走转发）；
+    // 根路径也统一进移动版（手机端不再暴露官方桌面 UI）
     if (req.url.startsWith('/mobile')) {
       serveMobile(req, res)
+      return
+    }
+    if (req.url === '/' || req.url === '/index.html') {
+      res.writeHead(302, { location: '/mobile' })
+      res.end()
       return
     }
     // Host/Origin 统一改写为固定内部域名：

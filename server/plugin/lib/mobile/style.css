@@ -563,6 +563,28 @@ button:focus { outline: none; }
   transition: all 0.15s var(--ease);
 }
 .q-opt:active { transform: scale(0.96); }
+.rename-input {
+  width: 100%;
+  min-height: 46px;
+  padding: 10px 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  outline: none;
+}
+.rename-input:focus { border-color: var(--accent); }
+.info-bar {
+  margin: 8px 14px 0;
+  padding: 6px 12px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 11.5px;
+  text-align: center;
+}
 .q-opt.sel {
   background: var(--accent-soft);
   border-color: var(--accent);

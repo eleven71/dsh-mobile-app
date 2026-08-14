@@ -111,11 +111,22 @@ $('themeBtn').addEventListener('click', () => {
   applyTheme();
 });
 
-/* ───────────── 导航 ───────────── */
-function push(v) { state.stack.push(v); render(); }
-function goBack() {
-  if (state.stack.length > 1) { state.stack.pop(); render(); }
+/* ───────────── 导航（接入浏览器 history：Android 返回键/浏览器后退都能用） ───────────── */
+function push(v) {
+  state.stack.push(v);
+  history.pushState({ view: v }, '');
+  render();
 }
+function goBack() {
+  if (state.stack.length > 1) history.back();  // 触发 popstate → 出栈渲染
+}
+window.addEventListener('popstate', () => {
+  // WebView 返回键 / 浏览器后退 / history.back() 统一走这里
+  if (state.stack.length > 1) {
+    state.stack.pop();
+    render();
+  }
+});
 backBtn.addEventListener('click', goBack);
 
 async function render() {
@@ -159,9 +170,6 @@ async function renderWorkspaces() {
       }
     }
     view.appendChild(list);
-    const link = el('a', 'footer-link', '需要完整桌面功能？打开桌面版 ›');
-    link.href = '/';
-    view.appendChild(link);
   } catch (e) {
     view.innerHTML = '';
     view.appendChild(errorCard(e.message, renderWorkspaces));
@@ -209,6 +217,7 @@ async function renderSessions(ws) {
       if (s.running) item.appendChild(el('span', 'badge-running', '运行中'));
       item.appendChild(el('div', 'l-arrow', '›'));
       item.addEventListener('click', () => push({ name: 'chat', sessionId: s.sessionId, title }));
+      attachLongPress(item, () => showSessionMenu(s, title, () => renderSessions(ws)));
       list.appendChild(item);
     }
     view.appendChild(list);
@@ -216,6 +225,105 @@ async function renderSessions(ws) {
     view.innerHTML = '';
     view.appendChild(errorCard(e.message, () => renderSessions(ws)));
   }
+}
+
+/* ───────────── 长按 / 会话操作（重命名、归档） ───────────── */
+function attachLongPress(el2, onLong) {
+  let timer = null;
+  let fired = false;
+  const start = () => {
+    fired = false;
+    timer = setTimeout(() => { fired = true; onLong(); }, 500);
+  };
+  const cancel = () => clearTimeout(timer);
+  el2.addEventListener('touchstart', start, { passive: true });
+  el2.addEventListener('touchend', cancel);
+  el2.addEventListener('touchmove', cancel);
+  el2.addEventListener('contextmenu', (e) => { e.preventDefault(); onLong(); });
+  el2.addEventListener('click', (e) => { if (fired) { e.stopPropagation(); fired = false; } });
+}
+
+function showSessionMenu(s, title, refresh) {
+  sheet.innerHTML = '';
+  const head = el('div', 'sheet-head', title || '会话操作');
+  const close = el('button', 'icon-btn s-close', '✕');
+  close.addEventListener('click', closeSheet);
+  head.appendChild(close);
+  sheet.appendChild(head);
+  const body = el('div', 'sheet-body');
+  const mk = (label, fn) => {
+    const b = el('button', 'sheet-model');
+    b.appendChild(el('span', 'm-name', label));
+    b.addEventListener('click', () => { closeSheet(); fn(); });
+    body.appendChild(b);
+  };
+  mk('✏️ 重命名', () => renameSession(s, refresh));
+  mk('🗂 归档', () => archiveSession(s, refresh));
+  sheet.appendChild(body);
+  mask.hidden = false;
+  sheet.hidden = false;
+}
+
+async function renameSession(s, refresh) {
+  sheet.innerHTML = '';
+  const head = el('div', 'sheet-head', '重命名会话');
+  const close = el('button', 'icon-btn s-close', '✕');
+  close.addEventListener('click', closeSheet);
+  head.appendChild(close);
+  sheet.appendChild(head);
+  const body = el('div', 'sheet-body');
+  const input = el('input', 'rename-input');
+  input.type = 'text';
+  input.placeholder = '新标题';
+  input.value = (s.projections && s.projections.values && s.projections.values.title) || '';
+  body.appendChild(input);
+  const save = el('button', 'new-btn', '保存');
+  save.style.margin = '12px 0 0';
+  save.addEventListener('click', async () => {
+    const title = input.value.trim();
+    if (!title) { toast('标题不能为空'); return; }
+    try {
+      await rpc('session.rename', { sessionId: s.sessionId, title });
+      closeSheet();
+      toast('已重命名');
+      if (refresh) refresh();
+    } catch (e) { toast('重命名失败：' + e.message); }
+  });
+  body.appendChild(save);
+  sheet.appendChild(body);
+  mask.hidden = false;
+  sheet.hidden = false;
+  input.focus();
+}
+
+async function archiveSession(s, refresh) {
+  // Android WebView 不支持 confirm()，用底部确认面板
+  sheet.innerHTML = '';
+  const head = el('div', 'sheet-head', '归档会话');
+  const close = el('button', 'icon-btn s-close', '✕');
+  close.addEventListener('click', closeSheet);
+  head.appendChild(close);
+  sheet.appendChild(head);
+  const body = el('div', 'sheet-body');
+  body.appendChild(el('div', 'note', '确定归档「' + ((s.projections && s.projections.values && s.projections.values.title) || s.sessionId.slice(0, 8)) + '」？归档后从列表隐藏，可在电脑端恢复。'));
+  const row = el('div', 'dlg-btns');
+  const cancel = el('button', 'dlg-btn deny', '取消');
+  cancel.addEventListener('click', closeSheet);
+  const ok = el('button', 'dlg-btn allow', '归档');
+  ok.addEventListener('click', async () => {
+    try {
+      await rpc('workspace.archiveSession', { sessionId: s.sessionId });
+      closeSheet();
+      toast('已归档');
+      if (refresh) refresh();
+    } catch (e) { toast('归档失败：' + e.message); }
+  });
+  row.appendChild(cancel);
+  row.appendChild(ok);
+  body.appendChild(row);
+  sheet.appendChild(body);
+  mask.hidden = false;
+  sheet.hidden = false;
 }
 
 /* ───────────── 聊天：事件 → 渲染项 ─────────────
@@ -352,12 +460,40 @@ async function renderChat(sessionId) {
     composer.hidden = false;
     view.classList.add('has-composer');
     await loadModels(sessionId);
+    await loadSessionInfo(sessionId);
     view.scrollTop = view.scrollHeight;
     startPolling(sessionId);
   } catch (e) {
     view.innerHTML = '';
     view.appendChild(errorCard(e.message, () => renderChat(sessionId)));
   }
+}
+
+/* 会话信息条：上下文压力 / token 用量（来自 session.list projections） */
+async function loadSessionInfo(sessionId) {
+  try {
+    const r = await rpc('session.list', {});
+    const s = (r.items || []).find((x) => x.sessionId === sessionId);
+    if (!s || !s.projections || !s.projections.values) return;
+    const v = s.projections.values;
+    const cp = v.contextPressure;
+    const tu = v.tokenUsage;
+    const parts = [];
+    if (cp && typeof cp.pressureTokens === 'number' && cp.contextWindow) {
+      parts.push('上下文 ' + Math.round(cp.pressureTokens / cp.contextWindow * 100) + '%');
+    }
+    if (tu) {
+      if (tu.outputTokens) parts.push('输出 ' + Math.round(tu.outputTokens / 1000) + 'k');
+      if (tu.uncachedInputTokens) parts.push('输入 ' + Math.round(tu.uncachedInputTokens / 1000) + 'k');
+    }
+    if (!parts.length) return;
+    let bar = view.querySelector('.info-bar');
+    if (!bar) {
+      bar = el('div', 'info-bar');
+      view.insertBefore(bar, view.firstChild);
+    }
+    bar.textContent = parts.join(' · ');
+  } catch (e) { /* 信息条失败静默 */ }
 }
 function paintChat(events) {
   const items = buildChat(events);
