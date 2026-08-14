@@ -28,7 +28,9 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      # 生成一把固定的 release 签名（每次构建同一把，之后可直接覆盖安装升级）
+      # 生成 release 签名 keystore——注意：每次构建都是新生成的一把（RUNNER_TEMP 每次
+      # 全新），签名每次不同，升级需先卸载旧版（README 已注明）。如要实现"固定签名
+      # 覆盖升级"，需把 keystore 持久化到仓库 Secret 而非运行时生成。
       # 密码来自仓库 Secret KEYSTORE_PASS（公开仓库也不会泄露）
       - name: Generate release keystore
         run: |
