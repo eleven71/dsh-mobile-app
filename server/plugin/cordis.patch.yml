@@ -24,12 +24,12 @@
     - id: ui-directory-picker-browse
       name: '@deepseek-ai/dsh-client-ui-directory-picker-browse'
 
-# 4) web-runtime 补丁（trustedHosts 由 start-dsh.ps1 在隧道变化时自动追加当前域名；
-#    此处仅保留 dsh.remote，示例域名请勿提交真实隧道域名）
+# 4) web-runtime 补丁（trustedHosts 仅 dsh.remote 即满足运行（实测；见 HANDOFF 坑 23/29）；
+#    真实隧道域名只存在 ~/.dsh/mobile-remote.auth 的 domain 行——仓库内不写真实域名；
+#    start-dsh.ps1 在隧道变化时自动追加/清理运行时副本的隧道域名）
 - id: web-runtime
   config:
     printUrl: true
     surfaceContext: true
     trustedHosts:
       - dsh.remote
-      # 隧道域名（每次 cloudflared 重启会变；start-dsh.ps1 会在隧道变化时同步更新此项）
