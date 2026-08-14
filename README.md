@@ -1,0 +1,58 @@
+# DSH Remote —— Android 手机端壳应用
+
+DeepSeek Harness 的手机客户端：全屏 WebView 加载你自己电脑上 DSH 的 `/mobile` 界面。
+**通用客户端**：任何人下载后，填自己的服务器地址和账号密码即可连接自己的 DSH，
+不经过浏览器、不输入域名、密码自动携带。
+
+> 服务器端需要部署 [dsh-plugin-mobile-remote](https://github.com/hongshuxifan321/dsh-mobile-app)（含 `/mobile` 界面 + 认证代理 + 隧道脚本），见 [DEPLOY.md](./DEPLOY.md)。
+
+## 原理
+
+```
+DSH Remote (Android WebView)
+   │  (自动携带 Basic Auth 凭证)
+   ▼
+https://<你的固定域名>/mobile   ← 你电脑上的 mobile-remote 认证代理
+   │
+   ▼
+127.0.0.1:3080  DSH web
+```
+
+- 支持两种地址：**固定域名**（如 `mydsh.de5.net`，App 自动通过 DNS 发现当前隧道）或
+  **完整地址**（如 `https://xxx.trycloudflare.com/mobile`）
+- WebView 原生支持 WebSocket → 审批弹窗、实时事件在手机端完全可用
+- 账号密码保存在手机本地设置，只填一次
+
+## 构建（GitHub Actions 在线构建，本机零安装）
+
+1. Fork 本仓库（或自行推送一份），打开 **Actions** 页 → 手动运行 `Build APK` 工作流
+   （约 3~5 分钟），构建完成后在该次运行的 **Summary** 页下载 **dsh-mobile-apk** 工件里的
+   `app-release.apk`。
+2. APK 传到手机安装（允许"安装未知来源应用"）。
+3. （可选）`workflow_dispatch` 构建会自动发布到 Releases 页，方便分发。
+
+## 使用
+
+1. 手机上打开 App → 首次启动自动弹出设置；
+2. **服务器地址**填你自己的固定域名（如 `mydsh.de5.net`，自动发现模式），或完整地址
+   `https://xxx.trycloudflare.com/mobile`；
+   **用户名 / 密码**填你服务器上 mobile-remote 插件配置的凭证（不是 API Key，是
+   `cordis.patch.yml` 里 `user` / `password` 的值）；
+3. 保存即连接，之后打开 App 直接进入 DSH 聊天界面。
+4. 服务器未启动时 App 会显示"连接失败"——先在服务器电脑上运行
+   `tools/start-dsh.ps1`。
+
+## 注意
+
+- 连接走 HTTPS 隧道；请勿把你的服务器密码提交到公开仓库；
+- 每次构建使用同一把 release 签名（工件里有 `release-keystore`），可直接覆盖安装升级；
+  若丢失 keystore，新版本需先卸载旧版再安装；
+- 远程修改 DSH 设置/凭据等 16 个特权方法仍被官方锁死（403），属设计如此。
+
+## 本地构建（可选）
+
+装 Android Studio 后直接 Open 本目录即可构建；或命令行：
+
+```bash
+gradle assembleDebug   # 输出 app/build/outputs/apk/debug/app-debug.apk
+```

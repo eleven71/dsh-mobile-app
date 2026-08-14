@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 聊天气泡 + 闪电：DSH Remote 图标 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 聊天气泡 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M30,38 C30,33 34,29 39,29 L69,29 C74,29 78,33 78,38 L78,62 C78,67 74,71 69,71 L52,71 L42,79 L44,71 L39,71 C34,71 30,67 30,62 Z" />
+    <!-- 闪电 -->
+    <path
+        android:fillColor="#4D6BFE"
+        android:pathData="M59,34 L46,56 L54,56 L50,74 L64,50 L55,50 Z" />
+</vector>
