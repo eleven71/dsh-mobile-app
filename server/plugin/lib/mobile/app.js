@@ -1,7 +1,7 @@
 /* DSH Remote 移动端 — 自研独立 UI（不依赖官方桌面 UI）
    协议：POST /api/<method>，体 {type:"client-request", rpcId, method, payload}
    响应：{type:"server-response", rpcId, result:{ok:true,value} | {ok:false,error}}
-   实时性：轮询 session.history（运行中 2s / 空闲 4s），支持流式增量渲染
+   实时性：WebSocket mux 增量为主（16ms 节流重绘），轮询 15s 兜底
    事件块字段：线上格式用 type（reasoning/text/tool-call/tool-result），兼容 kind */
 'use strict';
 
@@ -111,17 +111,28 @@ $('themeBtn').addEventListener('click', () => {
   applyTheme();
 });
 
-/* ───────────── 导航（接入浏览器 history：Android 返回键/浏览器后退都能用） ───────────── */
+/* ───────────── 导航（‹ 按钮纯本地出栈，绝不依赖 history；系统返回键走 popstate） ───────────── */
 function push(v) {
   state.stack.push(v);
-  history.pushState({ view: v }, '');
+  history.pushState({ view: v }, '');  // 仅用于系统返回键感知
   render();
 }
+/* 导航模型（WebView 兼容）：
+   - push：pushState 新增一层（仅用于系统返回键感知）
+   - ‹ 按钮：纯本地出栈 + render + replaceState 对齐 history 栈顶
+     （不用 history.back()——WebView 中 back 可能不触发 popstate，
+       导致 suppress 标志泄漏、后续返回全部失效）
+   - 系统返回键：popstate → 本地出栈 + render；本地栈只有一层时忽略
+   history 栈只增不减，系统返回键的多余 popstate 被 length<=1 检查吸收。 */
 function goBack() {
-  if (state.stack.length > 1) history.back();  // 触发 popstate → 出栈渲染
+  if (state.stack.length <= 1) return;
+  state.stack.pop();
+  render();
+  // 对齐 history 栈顶（防系统返回键多退一层）
+  const top = state.stack[state.stack.length - 1];
+  try { history.replaceState({ view: top }, ''); } catch {}
 }
 window.addEventListener('popstate', () => {
-  // WebView 返回键 / 浏览器后退 / history.back() 统一走这里
   if (state.stack.length > 1) {
     state.stack.pop();
     render();
@@ -132,6 +143,7 @@ backBtn.addEventListener('click', goBack);
 async function render() {
   const cur = state.stack[state.stack.length - 1] || { name: 'workspaces' };
   backBtn.hidden = state.stack.length <= 1;
+  moreBtn.hidden = false;
   stopPolling();
   if (cur.name !== 'chat') state.chatEvents = null;
   composer.hidden = true;
@@ -188,11 +200,81 @@ async function renderSessions(ws) {
     nb.appendChild(el('span', null, '新建会话'));
     nb.addEventListener('click', async () => {
       try {
-        const created = await rpc('session.create', { workspaceId: ws.workspaceId });
-        push({ name: 'chat', sessionId: created.sessionId, title: '新会话' });
-      } catch (e) { toast(e.message); }
+        // 预设选择（agentPreset.list 远程可用）
+        const r = await rpc('agentPreset.list', {});
+        const presets = r.presets || [];
+        const def = presets.find((p) => p.isDefault) || presets[0];
+        if (presets.length <= 1) {
+          // 只有默认预设：直接创建
+          const created = await rpc('session.create', { workspaceId: ws.workspaceId, agentPreset: def && def.id });
+          push({ name: 'chat', sessionId: created.sessionId, title: '新会话' });
+          return;
+        }
+        // 多个预设：弹层选择
+        sheet.innerHTML = '';
+        const head = el('div', 'sheet-head', '选择 Agent 预设');
+        const close = el('button', 'icon-btn s-close', '✕');
+        close.addEventListener('click', closeSheet);
+        head.appendChild(close);
+        sheet.appendChild(head);
+        const body = el('div', 'sheet-body');
+        for (const p of presets) {
+          const row = el('button', 'list-item');
+          row.appendChild(el('div', 'l-icon ws', '🤖'));
+          const main = el('div', 'l-main');
+          main.appendChild(el('div', 'l-title', p.name + (p.isDefault ? '（默认）' : '')));
+          main.appendChild(el('div', 'l-sub', truncate(p.description || '', 60)));
+          row.appendChild(main);
+          row.addEventListener('click', async () => {
+            closeSheet();
+            try {
+              const created = await rpc('session.create', { workspaceId: ws.workspaceId, agentPreset: p.id });
+              push({ name: 'chat', sessionId: created.sessionId, title: '新会话' });
+            } catch (e) { toast(e.message); }
+          });
+          body.appendChild(row);
+        }
+        sheet.appendChild(body);
+        mask.hidden = false;
+        sheet.hidden = false;
+      } catch (e) { toast('新建失败：' + e.message); }
     });
     view.appendChild(nb);
+    // 搜索框：全库会话内容搜索
+    const searchBox = el('input', 'rename-input search-input');
+    searchBox.type = 'search';
+    searchBox.placeholder = '搜索会话内容…';
+    searchBox.style.margin = '10px 14px 0';
+    searchBox.style.width = 'calc(100% - 28px)';
+    view.appendChild(searchBox);
+    let searchTimer = null;
+    searchBox.addEventListener('input', () => {
+      clearTimeout(searchTimer);
+      const q = searchBox.value.trim();
+      if (!q) { renderSessions(ws); return; }
+      searchTimer = setTimeout(async () => {
+        try {
+          const r = await rpc('session.search', { query: q });
+          const box = view.querySelector('.list');
+          if (!box) return;
+          box.innerHTML = '';
+          if (!r.items || !r.items.length) {
+            box.appendChild(el('div', 'note', '没有匹配的会话'));
+          }
+          for (const hit of r.items) {
+            const item = el('button', 'list-item');
+            item.appendChild(icon('ses', 'l-icon ses'));
+            const main = el('div', 'l-main');
+            main.appendChild(el('div', 'l-title', hit.sessionId.slice(0, 20)));
+            main.appendChild(el('div', 'l-sub', truncate(hit.snippet || '', 60)));
+            item.appendChild(main);
+            item.appendChild(el('div', 'l-arrow', '›'));
+            item.addEventListener('click', () => push({ name: 'chat', sessionId: hit.sessionId, title: '搜索结果' }));
+            box.appendChild(item);
+          }
+        } catch (e) { /* 搜索失败静默 */ }
+      }, 400);
+    });
     const list = el('div', 'list');
     const wsPath = ws.path || '';
     const items = (sess.items || [])
@@ -224,6 +306,16 @@ async function renderSessions(ws) {
   } catch (e) {
     view.innerHTML = '';
     view.appendChild(errorCard(e.message, () => renderSessions(ws)));
+  }
+}
+
+/* ───────────── 复制文本（长按消息） ───────────── */
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('已复制');
+  } catch (e) {
+    toast('复制失败');
   }
 }
 
@@ -326,6 +418,532 @@ async function archiveSession(s, refresh) {
   sheet.hidden = false;
 }
 
+/* ───────────── 更多菜单（目标/任务/新建工作区） ───────────── */
+const moreBtn = $('moreBtn');
+const ICONS_MORE = '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>';
+moreBtn.innerHTML = ICONS_MORE;
+
+function showMoreMenu() {
+  sheet.innerHTML = '';
+  const head = el('div', 'sheet-head', '更多');
+  const close = el('button', 'icon-btn s-close', '✕');
+  close.addEventListener('click', closeSheet);
+  head.appendChild(close);
+  sheet.appendChild(head);
+  const body = el('div', 'sheet-body');
+  const mk = (label, fn) => {
+    const b = el('button', 'sheet-model');
+    b.appendChild(el('span', 'm-name', label));
+    b.addEventListener('click', () => { closeSheet(); fn(); });
+    body.appendChild(b);
+  };
+  const cur = state.stack[state.stack.length - 1];
+  const inChat = cur && cur.name === 'chat';
+  mk('🎯 目标', () => showGoalPanel());
+  mk('📋 任务', () => showJobsPanel());
+  if (inChat) {
+    mk('⚡ 命令', () => showCommandsPanel());
+    mk('🧩 技能', () => showSkillPanel());
+    mk('🔀 子代理', () => showSubagentsPanel());
+    mk('📐 计划', () => showPlanPanel());
+    mk('⏳ 队列', () => showQueuePanel());
+    mk('⬇️ 导出会话', () => exportSession(cur.sessionId));
+  }
+  mk('📁 文件浏览', () => showFileBrowser());
+  mk('🗂 新建工作区', () => createWorkspace());
+  mk('🔒 权限说明', () => { toast('权限预设修改被官方远程锁定（403），请在电脑端操作'); });
+  sheet.appendChild(body);
+  mask.hidden = false;
+  sheet.hidden = false;
+}
+moreBtn.addEventListener('click', showMoreMenu);
+
+/* ───────────── 队列管理（mux session/queue 帧） ───────────── */
+let stateQueue = [];
+function showQueuePanel() {
+  sheet.innerHTML = '';
+  const head = el('div', 'sheet-head', '队列');
+  const close = el('button', 'icon-btn s-close', '✕');
+  close.addEventListener('click', closeSheet);
+  head.appendChild(close);
+  sheet.appendChild(head);
+  const body = el('div', 'sheet-body');
+  const cur = state.stack[state.stack.length - 1];
+  if (!stateQueue.length) {
+    body.appendChild(el('div', 'note', '队列为空'));
+  } else {
+    for (const item of stateQueue) {
+      const text = (item.message && item.message.content || []).map((b) => (b && b.type === 'text' ? b.text : '')).join(' ').slice(0, 60);
+      const row = el('div', 'list-item');
+      row.appendChild(el('div', 'l-icon ses', item.placement === 'steering' ? '▶' : '·'));
+      const main = el('div', 'l-main');
+      main.appendChild(el('div', 'l-title', truncate(text || '(非文本消息)', 30)));
+      main.appendChild(el('div', 'l-sub', item.placement === 'steering' ? '等待发送' : '上下文'));
+      row.appendChild(main);
+      const del = el('button', 'chip', '移除');
+      del.style.flex = 'none';
+      del.addEventListener('click', async () => {
+        try {
+          await rpc('session.updateQueue', { sessionId: cur.sessionId, itemId: item.id, action: { kind: 'remove' } });
+          toast('已移除');
+        } catch (e) { toast('操作失败：' + e.message); }
+      });
+      row.appendChild(del);
+      body.appendChild(row);
+    }
+  }
+  sheet.appendChild(body);
+  mask.hidden = false;
+  sheet.hidden = false;
+}
+
+/* ───────────── 会话导出 ───────────── */
+function exportSession(sessionId) {
+  // 同源下载会携带 Basic Auth；直接触发浏览器下载 JSONL 日志
+  location.href = '/api/session.export?sessionId=' + encodeURIComponent(sessionId);
+}
+
+/* ───────────── 技能目录（第三批：skill.list，会话上下文） ───────────── */
+function showSkillPanel() {
+  const cur = state.stack[state.stack.length - 1];
+  if (!cur || cur.name !== 'chat') { toast('请在会话中查看技能'); return; }
+  sheet.innerHTML = '';
+  const head = el('div', 'sheet-head', '技能');
+  const close = el('button', 'icon-btn s-close', '✕');
+  close.addEventListener('click', closeSheet);
+  head.appendChild(close);
+  sheet.appendChild(head);
+  const body = el('div', 'sheet-body');
+  body.appendChild(el('div', 'note', '加载中…'));
+  sheet.appendChild(body);
+  mask.hidden = false;
+  sheet.hidden = false;
+  rpc('skill.list', { sessionId: cur.sessionId })
+    .then((v) => {
+      body.innerHTML = '';
+      // 容错解析：items 数组（常见）或 value 直接为数组
+      const items = Array.isArray(v) ? v : (v.items || v.skills || []);
+      if (!items.length) { body.appendChild(el('div', 'note', '当前会话没有可用技能')); return; }
+      for (const s of items) {
+        const row = el('div', 'list-item');
+        row.appendChild(el('div', 'l-icon ses', '🧩'));
+        const main = el('div', 'l-main');
+        main.appendChild(el('div', 'l-title', s.name || s.id || '(未命名)'));
+        const desc = s.description || s.summary || '';
+        main.appendChild(el('div', 'l-sub', truncate(desc, 60)));
+        row.appendChild(main);
+        body.appendChild(row);
+      }
+    })
+    .catch((e) => { body.innerHTML = ''; body.appendChild(errorCard('技能加载失败：' + e.message)); });
+}
+
+/* ───────────── 命令面板（/ 命令：plan/compact/resume/model 等） ─────────────
+   命令本质是发「/」开头的消息（DSH 命令通道），清单可维护：
+   已知命令 /plan /plan off /model；其余按官方文档补充。
+   点击即发送；也可在输入框手输任意命令。 */
+const COMMANDS = [
+  { cmd: '/plan', desc: '进入计划模式（先设计再执行）' },
+  { cmd: '/plan off', desc: '退出计划模式' },
+  { cmd: '/model', desc: '切换模型' },
+  { cmd: '/compact', desc: '压缩会话上下文（节省 token）' },
+  { cmd: '/resume', desc: '恢复/继续会话' },
+  { cmd: '/clear', desc: '清空会话消息' },
+  { cmd: '/help', desc: '查看可用命令' },
+];
+function showCommandsPanel() {
+  const cur = state.stack[state.stack.length - 1];
+  if (!cur || cur.name !== 'chat') { toast('请在会话中使用命令'); return; }
+  sheet.innerHTML = '';
+  const head = el('div', 'sheet-head', '命令');
+  const close = el('button', 'icon-btn s-close', '✕');
+  close.addEventListener('click', closeSheet);
+  head.appendChild(close);
+  sheet.appendChild(head);
+  const body = el('div', 'sheet-body');
+  for (const c of COMMANDS) {
+    const row = el('button', 'list-item');
+    row.appendChild(el('div', 'l-icon ses', '/'));
+    const main = el('div', 'l-main');
+    main.appendChild(el('div', 'l-title', c.cmd));
+    main.appendChild(el('div', 'l-sub', c.desc));
+    row.appendChild(main);
+    row.addEventListener('click', async () => {
+      closeSheet();
+      try { await sendText(c.cmd); toast('已发送：' + c.cmd); }
+      catch (e) { toast('发送失败：' + e.message); }
+    });
+    body.appendChild(row);
+  }
+  body.appendChild(el('div', 'note', '也可以在输入框直接输入 / 开头的命令'));
+  sheet.appendChild(body);
+  mask.hidden = false;
+  sheet.hidden = false;
+}
+
+/* ───────────── 计划面板（第三批：plan mode 状态 + /plan 命令） ───────────── */
+async function sendText(text) {
+  const cur = state.stack[state.stack.length - 1];
+  if (!cur || cur.name !== 'chat') throw new Error('不在会话中');
+  await rpc('session.prompt', { sessionId: cur.sessionId, mode: 'queue', content: [{ type: 'text', text }] });
+  startPolling();
+}
+let planState = { active: false, pending: false };
+function showPlanPanel() {
+  const cur = state.stack[state.stack.length - 1];
+  if (!cur || cur.name !== 'chat') { toast('请在会话中查看计划'); return; }
+  sheet.innerHTML = '';
+  const head = el('div', 'sheet-head', '计划模式');
+  const close = el('button', 'icon-btn s-close', '✕');
+  close.addEventListener('click', closeSheet);
+  head.appendChild(close);
+  sheet.appendChild(head);
+  const body = el('div', 'sheet-body');
+  const status = planState.active ? '🟢 已激活' : (planState.pending ? '🟡 待生效' : '⚪ 未激活');
+  body.appendChild(el('div', 'note', '状态：' + status));
+  body.appendChild(el('div', 'note', '计划模式下模型先探索设计，再通过审批提交完整计划。'));
+  const mk = (label, cmd) => {
+    const b = el('button', 'sheet-model');
+    b.appendChild(el('span', 'm-name', label));
+    b.addEventListener('click', async () => {
+      closeSheet();
+      try {
+        await sendText(cmd);
+        toast('已发送：' + cmd);
+      } catch (e) { toast('发送失败：' + e.message); }
+    });
+    body.appendChild(b);
+  };
+  mk('📝 进入计划模式 (/plan)', '/plan');
+  mk('📤 提交计划退出 (/plan off)', '/plan off');
+  mk('✍️ 带想法进入 (/plan 我的计划…)', '/plan ');
+  sheet.appendChild(body);
+  mask.hidden = false;
+  sheet.hidden = false;
+}
+
+/* ───────────── 消息反馈（第三批：messageFeedback.put） ───────────── */
+async function sendFeedback(messageId, rating) {
+  const cur = state.stack[state.stack.length - 1];
+  if (!cur || cur.name !== 'chat') return;
+  try {
+    await rpc('messageFeedback.put', { sessionId: cur.sessionId, messageId, rating });
+    toast(rating === 'positive' ? '已赞 ✓' : '已反馈');
+  } catch (e) { toast('反馈失败：' + e.message); }
+}
+
+/* ───────────── 子代理管理（第三批：subagent.list / history / interrupt） ───────────── */
+function showSubagentsPanel() {
+  const cur = state.stack[state.stack.length - 1];
+  if (!cur || cur.name !== 'chat') { toast('请在会话中查看子代理'); return; }
+  sheet.innerHTML = '';
+  const head = el('div', 'sheet-head', '子代理');
+  const close = el('button', 'icon-btn s-close', '✕');
+  close.addEventListener('click', closeSheet);
+  head.appendChild(close);
+  sheet.appendChild(head);
+  const body = el('div', 'sheet-body');
+  body.appendChild(el('div', 'note', '加载中…'));
+  sheet.appendChild(body);
+  mask.hidden = false;
+  sheet.hidden = false;
+  rpc('subagent.list', { parentSessionId: cur.sessionId })
+    .then((v) => {
+      body.innerHTML = '';
+      const entries = v.entries || [];
+      if (!entries.length) {
+        body.appendChild(el('div', 'note', v.parentAvailable === false ? '父会话不可用' : '没有子代理'));
+        return;
+      }
+      for (const sa of entries) {
+        const row = el('div', 'list-item');
+        row.appendChild(el('div', 'l-icon ses', '🔀'));
+        const main = el('div', 'l-main');
+        const name = sa.name || sa.title || sa.id || '(未命名)';
+        main.appendChild(el('div', 'l-title', name));
+        const status = sa.status || (sa.running ? 'running' : 'idle');
+        main.appendChild(el('div', 'l-sub', status + (sa.updatedAt ? ' · ' + relTime(sa.updatedAt) : '')));
+        row.appendChild(main);
+        // 中断按钮（运行中才有意义；容错：有 id 就提供）
+        const sid = sa.subagentId || sa.id || sa.sessionId;
+        if (sid) {
+          const stop = el('button', 'chip', '⏹');
+          stop.style.flex = 'none';
+          stop.addEventListener('click', async (ev) => {
+            ev.stopPropagation();
+            try {
+              await rpc('subagent.interrupt', { subagentId: sid });
+              toast('已中断');
+            } catch (e) { toast('中断失败：' + e.message); }
+          });
+          row.appendChild(stop);
+        }
+        // 点条目看历史
+        if (sid) {
+          row.addEventListener('click', () => showSubagentHistory(sid, name));
+        }
+        body.appendChild(row);
+      }
+    })
+    .catch((e) => { body.innerHTML = ''; body.appendChild(errorCard('子代理加载失败：' + e.message)); });
+}
+
+function showSubagentHistory(subagentId, name) {
+  const cur = state.stack[state.stack.length - 1];
+  if (!cur) return;
+  sheet.innerHTML = '';
+  const head = el('div', 'sheet-head', '子代理 · ' + truncate(name, 12));
+  const close = el('button', 'icon-btn s-close', '✕');
+  close.addEventListener('click', closeSheet);
+  head.appendChild(close);
+  sheet.appendChild(head);
+  const body = el('div', 'sheet-body');
+  body.appendChild(el('div', 'note', '加载中…'));
+  sheet.appendChild(body);
+  rpc('subagent.history', { subagentId })
+    .then((v) => {
+      body.innerHTML = '';
+      // 容错：events 或 messages 数组
+      const events = v.events || v.messages || (Array.isArray(v) ? v : []);
+      if (!events.length) { body.appendChild(el('div', 'note', '无历史记录')); return; }
+      for (const e of events.slice(-40)) {
+        const ev = e.event || e;
+        const d = ev.data || {};
+        const msg = ev.message || d.message || d;
+        const blocks = (msg.content || []).map((b) => (b && b.type === 'text' ? b.text : '')).join(' ');
+        const text = blocks || msg.text || ev.type || '';
+        if (text) {
+          const row = el('div', 'list-item');
+          row.appendChild(el('div', 'l-icon ' + (msg.role === 'user' ? 'ws' : 'ses'), msg.role === 'user' ? '你' : '🤖'));
+          const main = el('div', 'l-main');
+          main.appendChild(el('div', 'l-sub', truncate(text, 120)));
+          row.appendChild(main);
+          body.appendChild(row);
+        }
+      }
+    })
+    .catch((e) => { body.innerHTML = ''; body.appendChild(errorCard('历史加载失败：' + e.message)); });
+}
+
+/* ───────────── 文件浏览（host.listDirectory，browse 能力） ───────────── */
+let browsePath = null;
+let fileBrowserOnPick = null;  // picker 模式回调（null = 纯浏览）
+async function showFileBrowser(startPath, onPick) {
+  fileBrowserOnPick = onPick || null;
+  if (!startPath) {
+    // 从当前工作区路径开始
+    const wsEntry = [...state.stack].reverse().find((x) => x.ws && x.ws.path);
+    startPath = wsEntry ? wsEntry.ws.path : null;
+  }
+  browsePath = startPath || 'C:\\';
+  await renderFileBrowser();
+}
+async function renderFileBrowser() {
+  sheet.innerHTML = '';
+  const head = el('div', 'sheet-head', '文件浏览');
+  const close = el('button', 'icon-btn s-close', '✕');
+  close.addEventListener('click', closeSheet);
+  head.appendChild(close);
+  sheet.appendChild(head);
+  const body = el('div', 'sheet-body');
+  body.appendChild(el('div', 'spinner'));
+  sheet.appendChild(body);
+  mask.hidden = false;
+  sheet.hidden = false;
+  try {
+    const r = await rpc('host.listDirectory', { path: browsePath });
+    body.innerHTML = '';
+    const crumbs = el('div', 'info-bar');
+    crumbs.textContent = browsePath;
+    body.appendChild(crumbs);
+    const list = el('div', 'list');
+    const entries = (r.entries || []).filter((e) => e.isDirectory);
+    if (!entries.length) list.appendChild(el('div', 'note', '此目录没有子文件夹'));
+    for (const e of entries) {
+      const item = el('button', 'list-item');
+      item.appendChild(icon('ws', 'l-icon ws'));
+      const main = el('div', 'l-main');
+      main.appendChild(el('div', 'l-title', e.name));
+      item.appendChild(main);
+      item.appendChild(el('div', 'l-arrow', '›'));
+      item.addEventListener('click', async () => {
+        browsePath = e.path;
+        await renderFileBrowser();
+      });
+      list.appendChild(item);
+    }
+    // 返回上级
+    const up = el('button', 'chip', '⬆ 上级');
+    up.style.margin = '8px 14px';
+    up.addEventListener('click', async () => {
+      const idx = browsePath.lastIndexOf('\\');
+      if (idx > 2) { browsePath = browsePath.slice(0, idx); await renderFileBrowser(); }
+    });
+    body.appendChild(list);
+    body.appendChild(up);
+    // picker 模式：选择当前目录（供工作区/会话创建使用）
+    if (fileBrowserOnPick) {
+      const pick = el('button', 'new-btn', '📌 选择此目录：' + truncate(browsePath, 24));
+      pick.style.margin = '8px 14px 0';
+      pick.addEventListener('click', () => {
+        const cb = fileBrowserOnPick;
+        fileBrowserOnPick = null;
+        closeSheet();
+        cb(browsePath);
+      });
+      body.appendChild(pick);
+    }
+  } catch (e) {
+    body.innerHTML = '';
+    body.appendChild(el('div', 'note', '浏览失败：' + e.message));
+  }
+}
+/* ───────────── 目标面板 ───────────── */
+async function showGoalPanel() {
+  const cur = state.stack[state.stack.length - 1];
+  if (!cur || cur.name !== 'chat') { toast('请先进入一个会话'); return; }
+  sheet.innerHTML = '';
+  const head = el('div', 'sheet-head', '目标');
+  const close = el('button', 'icon-btn s-close', '✕');
+  close.addEventListener('click', closeSheet);
+  head.appendChild(close);
+  sheet.appendChild(head);
+  const body = el('div', 'sheet-body');
+  body.appendChild(el('div', 'spinner'));
+  sheet.appendChild(body);
+  mask.hidden = false;
+  sheet.hidden = false;
+  try {
+    const r = await rpc('session.list', {});
+    const s = (r.items || []).find((x) => x.sessionId === cur.sessionId);
+    const goal = s && s.projections && s.projections.values && s.projections.values.goal;
+    body.innerHTML = '';
+    if (!goal || !goal.goal) {
+      body.appendChild(el('div', 'note', '当前会话没有目标'));
+      const input = el('input', 'rename-input');
+      input.placeholder = '目标描述（objective）';
+      body.appendChild(input);
+      const mk2 = el('button', 'new-btn', '创建目标');
+      mk2.style.margin = '12px 0 0';
+      mk2.addEventListener('click', async () => {
+        const objective = input.value.trim();
+        if (!objective) { toast('请输入目标描述'); return; }
+        try {
+          await rpc('goal.create', { sessionId: cur.sessionId, objective });
+          closeSheet();
+          toast('目标已创建');
+        } catch (e) { toast('创建失败：' + e.message); }
+      });
+      body.appendChild(mk2);
+    } else {
+      const g = goal.goal;
+      const card = el('div', 'tool');
+      const head2 = el('button', 'tool-head');
+      head2.appendChild(el('span', 't-icon', '🎯'));
+      head2.appendChild(el('span', 't-name', g.phase === 'complete' ? '已完成' : (g.phase === 'paused' ? '已暂停' : '进行中')));
+      head2.appendChild(el('span', 't-chev', '›'));
+      head2.addEventListener('click', () => card.classList.toggle('open'));
+      const body2 = el('div', 'tool-body');
+      body2.appendChild(el('pre', null, g.objective || ''));
+      body2.appendChild(el('pre', null, '轮次：' + (goal.roundsStarted ?? 0) + '/' + (g.maxGoalRounds ?? '∞')));
+      card.appendChild(head2);
+      card.appendChild(body2);
+      card.classList.add('open');
+      body.appendChild(card);
+      const row = el('div', 'dlg-btns');
+      const mk3 = (label, method, payload) => {
+        const b = el('button', 'dlg-btn deny', label);
+        b.addEventListener('click', async () => {
+          try {
+            await rpc(method, { sessionId: cur.sessionId, ref: g.id, ...payload });
+            closeSheet();
+            toast(label + '成功');
+          } catch (e) { toast(label + '失败：' + e.message); }
+        });
+        return b;
+      };
+      if (g.phase === 'active' || g.phase === 'running') {
+        row.appendChild(mk3('暂停', 'goal.pause'));
+        row.appendChild(mk3('完成', 'goal.complete'));
+      } else if (g.phase === 'paused') {
+        row.appendChild(mk3('继续', 'goal.resume'));
+      } else if (g.phase === 'complete') {
+        row.appendChild(mk3('清除', 'goal.clear'));
+      }
+      body.appendChild(row);
+    }
+  } catch (e) {
+    body.innerHTML = '';
+    body.appendChild(el('div', 'note', '加载失败：' + e.message));
+  }
+}
+
+/* ───────────── 任务面板（来自 mux session/jobs 帧） ───────────── */
+let stateJobs = [];
+function showJobsPanel() {
+  sheet.innerHTML = '';
+  const head = el('div', 'sheet-head', '任务');
+  const close = el('button', 'icon-btn s-close', '✕');
+  close.addEventListener('click', closeSheet);
+  head.appendChild(close);
+  sheet.appendChild(head);
+  const body = el('div', 'sheet-body');
+  if (!stateJobs.length) {
+    body.appendChild(el('div', 'note', '暂无任务（打开会话后实时更新）'));
+  } else {
+    for (const j of stateJobs) {
+      const item = el('div', 'list-item');
+      item.appendChild(el('div', 'l-icon ses', j.status === 'running' ? '▶' : '✓'));
+      const main = el('div', 'l-main');
+      main.appendChild(el('div', 'l-title', j.label || j.kind || j.id));
+      main.appendChild(el('div', 'l-sub', (j.status || '') + (j.detail ? ' · ' + j.detail : '')));
+      item.appendChild(main);
+      body.appendChild(item);
+    }
+  }
+  sheet.appendChild(body);
+  mask.hidden = false;
+  sheet.hidden = false;
+}
+
+/* ───────────── 新建工作区 ───────────── */
+function createWorkspace() {
+  sheet.innerHTML = '';
+  const head = el('div', 'sheet-head', '新建工作区');
+  const close = el('button', 'icon-btn s-close', '✕');
+  close.addEventListener('click', closeSheet);
+  head.appendChild(close);
+  sheet.appendChild(head);
+  const body = el('div', 'sheet-body');
+  const input = el('input', 'rename-input');
+  input.placeholder = '文件夹路径，如 C:\\projects\\myapp';
+  body.appendChild(input);
+  // 浏览选择：打开文件浏览器选目录，填入路径（不必手打地址）
+  const browse = el('button', 'chip', '📂 浏览选择');
+  browse.style.margin = '8px 0 0';
+  browse.addEventListener('click', () => {
+    showFileBrowser(null, (path) => { input.value = path; input.focus(); });
+  });
+  body.appendChild(browse);
+  const save = el('button', 'new-btn', '创建');
+  save.style.margin = '12px 0 0';
+  save.addEventListener('click', async () => {
+    const path = input.value.trim();
+    if (!path) { toast('请输入路径'); return; }
+    try {
+      await rpc('workspace.create', { path });
+      closeSheet();
+      toast('工作区已创建');
+      render();
+    } catch (e) { toast('创建失败：' + e.message); }
+  });
+  body.appendChild(save);
+  sheet.appendChild(body);
+  mask.hidden = false;
+  sheet.hidden = false;
+  input.focus();
+}
+
 /* ───────────── 聊天：事件 → 渲染项 ─────────────
    两遍法：先找已完结的 turn（有 assistant/message），其流式 chunk 跳过；
    未完结 turn 的 delta 累积为"活"块（带 ▍ 光标）。 */
@@ -346,7 +964,11 @@ function buildChat(events) {
       if (d.source && d.source.kind && d.source.kind !== 'user') continue;
       for (const b of blocksOf(d)) if (blockType(b) === 'text' && blockText(b)) items.push({ kind: 'user', text: blockText(b) });
     } else if (ev.type === 'assistant/message') {
-      for (const b of blocksOf(d.message || d)) items.push(blockItem(b));
+      const msgId = (d.message && d.message.id) || d.id;
+      for (const b of blocksOf(d.message || d)) {
+        const it = blockItem(b);
+        if (it) { it.msgId = msgId; items.push(it); }
+      }
     } else if (ev.type === 'assistant/chunk') {
       const c = d.chunk || {};
       const tk = turnKey(d);
@@ -365,7 +987,18 @@ function buildChat(events) {
       }
       // usage / finish / 其它：忽略
     } else if (ev.type === 'tool/call') {
-      items.push({ kind: 'tool', name: d.toolName || d.name || '工具', args: d.args ?? d });
+      const toolArgs = d.args ?? d;
+      // 交付物：从工具参数提取产出文件路径（edit/write 类工具的 file_path）
+      let filePath = null;
+      if (typeof toolArgs === 'string') {
+        try {
+          const parsed = JSON.parse(toolArgs);
+          if (parsed && typeof parsed.file_path === 'string') filePath = parsed.file_path;
+        } catch { /* 非 JSON 参数忽略 */ }
+      } else if (toolArgs && typeof toolArgs.file_path === 'string') {
+        filePath = toolArgs.file_path;
+      }
+      items.push({ kind: 'tool', name: d.toolName || d.name || '工具', args: toolArgs, filePath });
     } else if (ev.type === 'tool/result') {
       const last = [...items].reverse().find((o) => o.kind === 'tool' && !o.result);
       if (last) last.result = toolResultOf(d);
@@ -388,13 +1021,26 @@ function blockItem(b) {
 
 function renderItem(container, it) {
   if (!it) return;
+  const copyable = (node, text) => attachLongPress(node, () => copyText(text));
   if (it.kind === 'user') {
     const b = el('div', 'bubble user', it.text);
+    copyable(b, it.text);
     container.appendChild(b);
   } else if (it.kind === 'ai') {
     const b = el('div', 'bubble ai' + (it.partial ? ' typing' : ''));
     renderMarkdownish(b, it.text);
+    copyable(b, it.text);
     container.appendChild(b);
+    // 消息反馈（第三批）：👍/👎 → messageFeedback.put
+    if (it.msgId && !it.partial) {
+      const row = el('div', 'fb-row');
+      const up = el('button', 'chip fb-btn', '👍');
+      const down = el('button', 'chip fb-btn', '👎');
+      up.addEventListener('click', () => sendFeedback(it.msgId, 'positive'));
+      down.addEventListener('click', () => sendFeedback(it.msgId, 'negative'));
+      row.appendChild(up); row.appendChild(down);
+      container.appendChild(row);
+    }
   } else if (it.kind === 'think') {
     const t = el('div', 'think');
     const head = el('button', 'think-head');
@@ -415,6 +1061,12 @@ function renderItem(container, it) {
     const body = el('div', 'tool-body');
     if (it.args !== null && it.args !== undefined) body.appendChild(el('pre', null, truncate(fmtJson(it.args), 2000)));
     if (it.result !== null && it.result !== undefined) body.appendChild(el('pre', null, truncate(fmtJson(it.result), 3000)));
+    // 交付物：产出文件路径（成功时高亮显示）
+    if (it.filePath) {
+      const file = el('div', 'tool-file' + (it.result !== null && it.result !== undefined ? ' ok' : ''));
+      file.appendChild(el('span', null, '📄 ' + it.filePath));
+      body.appendChild(file);
+    }
     head.addEventListener('click', () => t.classList.toggle('open'));
     t.appendChild(head); t.appendChild(body);
     container.appendChild(t);
@@ -495,7 +1147,20 @@ async function loadSessionInfo(sessionId) {
     bar.textContent = parts.join(' · ');
   } catch (e) { /* 信息条失败静默 */ }
 }
+/* paintChat 节流合并：流式 delta 密集时（WS 每帧一次事件），
+   把多次重绘合并为 16ms 一帧，避免大消息全量重建 DOM 卡顿。
+   用 setTimeout 而非 rAF（后台 tab 时 rAF 不触发，数据会滞留）。 */
+let paintPending = false;
 function paintChat(events) {
+  state.chatEvents = events;
+  if (paintPending) return;
+  paintPending = true;
+  setTimeout(() => {
+    paintPending = false;
+    doPaintChat(state.chatEvents || []);
+  }, 16);
+}
+function doPaintChat(events) {
   const items = buildChat(events);
   const chat = el('div', 'chat');
   if (!items.length) chat.appendChild(el('div', 'note', '还没有消息，发一句话开始吧'));
@@ -655,6 +1320,7 @@ function openSheet() {
 }
 function closeSheet() { sheet.hidden = true; mask.hidden = true; }
 mask.addEventListener('click', closeSheet);
+mask.addEventListener('touchend', closeSheet);
 
 /* ───────────── 杂项 ───────────── */
 function errorCard(message, retry) {
@@ -730,10 +1396,19 @@ function handleMux(frame) {
       state.lastSeq = ev.seq;
       if (ev.type === 'turn/start') state.running = true;
       else if (ev.type === 'turn/end') state.running = false;
+      // 计划模式状态（plan/mode 事件）
+      if (ev.type === 'plan/mode') {
+        planState = { active: !!d.active, pending: false };
+        if (planState.active) toast('📐 计划模式已激活');
+      }
       paintChat(state.chatEvents);
       if (state.running) view.scrollTop = view.scrollHeight;
       renderChips();
     }
+  } else if (frame.method === 'session/jobs') {
+    stateJobs = p.jobs || [];
+  } else if (frame.method === 'session/queue') {
+    stateQueue = p.items || [];
   }
 }
 
@@ -840,7 +1515,9 @@ backBtn.innerHTML = ICONS.back;
 themeBtn.innerHTML = ICONS.theme;
 sendBtn.innerHTML = ICONS.send;
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) render();
+  if (!document.hidden && state.stack.length) render();
 });
 connectMux();
-render();
+// 根层必须入栈：主界面不是「兜底渲染」，否则第一层导航没有返回按钮
+//（修复：栈为空时点工作区 → 栈深=1 → backHidden=true → 返回键消失）
+push({ name: 'workspaces' });

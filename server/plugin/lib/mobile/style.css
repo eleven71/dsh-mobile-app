@@ -442,6 +442,8 @@ button:focus { outline: none; }
 .send-btn:disabled { opacity: 0.45; box-shadow: none; }
 
 /* ── 底部抽屉（模型选择） ── */
+/* hidden 必须能压过 display:flex/block（否则 X 关闭按钮失效） */
+.mask[hidden], .sheet[hidden] { display: none !important; }
 .mask {
   position: fixed; inset: 0;
   background: rgba(8, 10, 18, 0.5);
@@ -661,3 +663,38 @@ button:focus { outline: none; }
   text-decoration: none;
 }
 .footer-link:active { color: var(--accent); }
+
+/* ── 消息反馈按钮行（第三批） ── */
+.fb-row {
+  display: flex;
+  gap: 6px;
+  align-self: flex-start;
+  margin: -4px 0 2px 52px;
+  opacity: 0.55;
+}
+.fb-row .fb-btn {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+}
+.fb-row .fb-btn:active { opacity: 1; transform: scale(0.94); }
+
+/* ── 交付物：产出文件（工具卡片内） ── */
+.tool-file {
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  background: var(--ok-soft);
+  color: var(--ok);
+  font-size: 12.5px;
+  word-break: break-all;
+  line-height: 18px;
+}
+.tool-file.ok { background: var(--ok-soft); }
+
+/* ── HTML hidden 属性兜底：显式 display 样式会覆盖 hidden 的默认 display:none ──
+   （.icon-btn 等类设了 display:inline-flex，导致 backBtn.hidden 不生效——HANDOFF 坑 1 变体） */
+[hidden] { display: none !important; }

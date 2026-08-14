@@ -11,7 +11,6 @@ import android.os.Looper;
 import android.view.View;
 import android.view.Window;
 import android.webkit.HttpAuthHandler;
-import android.webkit.SslErrorHandler;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
@@ -66,7 +65,9 @@ public class MainActivity extends Activity {
         s.setSupportZoom(false);
         s.setBuiltInZoomControls(false);
         s.setMediaPlaybackRequiresUserGesture(false);
-        s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+        // 全链路 HTTPS（cloudflared 隧道），混合内容默认拒绝（不显式放行）
+        // 移动端资源已带版本号（?v=mtime），WebView 无缓存模式确保永远加载最新
+        s.setCacheMode(WebSettings.LOAD_NO_CACHE);
 
         web.setWebViewClient(new WebViewClient() {
             @Override
@@ -98,11 +99,6 @@ public class MainActivity extends Activity {
                 }
             }
 
-            @Override
-            public void onReceivedSslError(WebView view, SslErrorHandler handler, android.net.http.SslError error) {
-                // 个人服务器/自签证书场景放行；正式域名环境可移除
-                handler.proceed();
-            }
         });
 
         web.setWebChromeClient(new WebChromeClient());
