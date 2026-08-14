@@ -41,12 +41,13 @@
 2. 配置登录凭证（手机 App 登录时要用，请记好；不要把密码提交到公开仓库），二选一：
    - **默认凭证**：不配置任何东西。插件首次启动自动生成密码并写入
      `~/.dsh/mobile-remote.auth`（用户名固定 `dsh`），用记事本打开该文件查看密码；
-   - **自定义凭证**：编辑 `server/plugin/cordis.patch.yml`，在 `web-runtime` 的
-     `config` 下加两行（缩进与 `trustedHosts` 同级）：
-     ```yaml
-         user: your-name
-         password: your-strong-password
+   - **自定义凭证（推荐，凭证只存在该文件）**：编辑 `~/.dsh/mobile-remote.auth`，
+     写成两行（⚠️该文件不在 git，是凭证唯一明文位置，勿提交）：
      ```
+     user=your-name
+     password=your-strong-password
+     ```
+     插件启动时读取；若文件只有一行则视为旧格式纯密码（用户名回落为 `dsh`）。
 
 ## 五、安装插件到 DSH
 

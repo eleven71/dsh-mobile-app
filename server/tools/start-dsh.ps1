@@ -150,27 +150,9 @@ while ($true) {
           if ($tunnelDomain -ne $lastDomain) {
             Update-Dnshe -Cname $tunnelDomain
             $lastDomain = $tunnelDomain
-            # sync current tunnel domain into plugin trustedHosts (cordis.patch.yml),
-            # so remote browsers pass the frontend trust fence (settings UI available).
-            # REPLACE stale tunnel lines instead of appending - dead domains accumulate
-            # otherwise (6 stale entries observed 2026-08-15).
-            $patchPath = Join-Path $PSScriptRoot '..\plugin\cordis.patch.yml'
-            if (Test-Path $patchPath) {
-              $patch = Get-Content $patchPath -Raw -Encoding UTF8
-              # protect the current tunnel line with a placeholder, strip stale
-              # tunnel lines, then restore the current one (it is also trycloudflare.com)
-              $ph = '@@CURRENT_TUNNEL@@'
-              $tmp = $patch -replace [regex]::Escape("      - $tunnelDomain"), $ph
-              $cleaned = $tmp -replace '(?m)^\s+- [a-z0-9-]+\.trycloudflare\.com\r?\n', ''
-              $cleaned = $cleaned -replace [regex]::Escape($ph), "      - $tunnelDomain"
-              if ($cleaned -notmatch [regex]::Escape($tunnelDomain)) {
-                $cleaned = $cleaned -replace '(\s+- dsh\.remote)', "`$1`n      - $tunnelDomain"
-              }
-              if ($cleaned -ne $patch) {
-                Set-Content $patchPath -Value $cleaned -Encoding UTF8 -NoNewline
-                Write-Host ('[start-dsh] trustedHosts -> ' + $tunnelDomain) -ForegroundColor DarkGray
-              }
-            }
+            # Real tunnel domains live only in tools/last-phone-url.txt (runtime,
+            # gitignored). The fixed domain (mydsh.de5.net) is initialized once
+            # in ~/.dsh/mobile-remote.auth - no per-tunnel maintenance needed.
             $phoneUrl = 'https://' + $tunnelDomain
             Write-Host ('[start-dsh] PHONE URL: ' + $phoneUrl + ' (fixed domain https://' + $DOMAIN + ' when DNSHE is healthy)') -ForegroundColor Green
             # persist current phone URL (autostart runs hidden - user reads this file)

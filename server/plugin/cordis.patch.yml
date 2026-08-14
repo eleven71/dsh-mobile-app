@@ -1,14 +1,35 @@
-# User layer (web profile)
-# - browse directory picker: injected automatically by the dsh-plugin-mobile-remote plugin
-# - The mobile-remote auth proxy rewrites Host/Origin to the fixed internal
-#   authority 'dsh.remote'; trust it permanently here so plain `dsh web` works
-#   without --trusted-host. (Note: user-layer patches replace the row's whole
-#   config, so --trusted-host CLI values are not merged into this row.)
+# dsh-plugin-mobile-remote 配置注入：自动修复远程场景的目录选择器
+# native picker（pickDirectory）被官方锁 loopback，远程一律 403；
+# browse picker 用 listDirectory（不受限），应用内浏览目录，远程可用。
+
+# 1) 禁用 auto picker（Windows+127.0.0.1 下判定为 native → 远程 403）
+- id: directory-picker
+  disabled: true
+
+# 2) 挂载本插件自身（⚠️ 此 insert 行是插件 apply 的入口——删掉插件就不加载，
+#    8082 代理静默消失。2026-08-15 曾因缺此行走失，见 HANDOFF 坑 28）
+- insert:
+    - id: mobile-remote
+      name: 'dsh-plugin-mobile-remote'
+      config:
+        enabled: true
+        proxyPort: 8082
+        upstreamPort: 3080
+        tunnelEnabled: false
+
+# 3) 挂 browse：host 后端 + client 表面
+- insert:
+    - id: directory-picker-browse
+      name: '@deepseek-ai/dsh-host-directory-picker-browse'
+    - id: ui-directory-picker-browse
+      name: '@deepseek-ai/dsh-client-ui-directory-picker-browse'
+
+# 4) web-runtime 补丁（trustedHosts 由 start-dsh.ps1 在隧道变化时自动追加当前域名；
+#    此处仅保留 dsh.remote，示例域名请勿提交真实隧道域名）
 - id: web-runtime
   config:
     printUrl: true
     surfaceContext: true
     trustedHosts:
       - dsh.remote
-      # 隧道域名：start-dsh.ps1 会在隧道变化时自动更新此处；
-      # 未配置时远程浏览器部分设置 UI 受限（可用 apply-isloopback-patch.ps1 解除）
+      # 隧道域名（每次 cloudflared 重启会变；start-dsh.ps1 会在隧道变化时同步更新此项）

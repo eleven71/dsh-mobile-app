@@ -35,6 +35,28 @@ function defaultPasswordFile() {
   return join(homedir(), '.dsh', 'mobile-remote.auth')
 }
 
+/**
+ * Credentials live ONLY in this file (user=<name> / password=<pw> lines) so plaintext
+ * never appears in git-tracked patches or docs. Legacy single-line password files
+ * still work (user falls back to config.user ?? 'dsh').
+ * Returns { user, password } or null when the file has no credentials.
+ */
+function loadCredentials(file) {
+  if (!existsSync(file)) return null
+  const lines = readFileSync(file, 'utf8').split('\n').map((l) => l.trim()).filter(Boolean)
+  const creds = {}
+  for (const line of lines) {
+    const p = line.indexOf('=')
+    if (p > 0) {
+      const k = line.slice(0, p).trim().toLowerCase()
+      if (k === 'user' || k === 'password') creds[k] = line.slice(p + 1).trim()
+    }
+  }
+  if (creds.password) return creds // { user: string|null, password: string }
+  if (lines.length === 1) return { user: null, password: lines[0] } // legacy single-line
+  return null
+}
+
 function loadOrCreatePassword(file) {
   if (existsSync(file)) {
     const pw = readFileSync(file, 'utf8').trim()
@@ -65,9 +87,11 @@ function findCloudflared(explicit) {
 export function apply(ctx, config) {
   if (!config.enabled) return
   const passwordFile = config.passwordFile ?? defaultPasswordFile()
-  // 固定凭证优先（用户自定义 user/password），否则读文件/自动生成
-  const user = config.user ?? 'dsh'
-  const password = config.password ?? loadOrCreatePassword(passwordFile)
+  // 凭证唯一来源：~/.dsh/mobile-remote.auth（user/password 行，不进 git）。
+  // 回退链：文件凭证 → config.user/password（脱敏部署场景）→ 自动生成密码 + 默认 user dsh
+  const cred = loadCredentials(passwordFile)
+  const user = cred?.user ?? config.user ?? 'dsh'
+  const password = cred?.password ?? config.password ?? loadOrCreatePassword(passwordFile)
 
   let proxyServer = null
   let tunnelProc = null
