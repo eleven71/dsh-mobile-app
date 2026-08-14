@@ -1,21 +1,14 @@
-# dsh-plugin-mobile-remote - patch config for your own deployment
-# Replace your-user / your-password with YOUR credentials (used by the phone app to log in).
-# Do NOT commit real passwords to a public repo.
-- id: directory-picker
-  disabled: true
-
-- insert:
-    - id: mobile-remote
-      name: 'dsh-plugin-mobile-remote'
-      config:
-        enabled: true
-        user: 'your-user'
-        password: 'your-password'
-        upstreamPort: 3080
-        tunnelEnabled: false
-
-- insert:
-    - id: directory-picker-browse
-      name: '@deepseek-ai/dsh-host-directory-picker-browse'
-    - id: ui-directory-picker-browse
-      name: '@deepseek-ai/dsh-client-ui-directory-picker-browse'
+# User layer (web profile)
+# - browse directory picker: injected automatically by the dsh-plugin-mobile-remote plugin
+# - The mobile-remote auth proxy rewrites Host/Origin to the fixed internal
+#   authority 'dsh.remote'; trust it permanently here so plain `dsh web` works
+#   without --trusted-host. (Note: user-layer patches replace the row's whole
+#   config, so --trusted-host CLI values are not merged into this row.)
+- id: web-runtime
+  config:
+    printUrl: true
+    surfaceContext: true
+    trustedHosts:
+      - dsh.remote
+      # 隧道域名（每次 cloudflared 重启会变；start-dsh.ps1 会在隧道变化时同步更新此项）
+      - xxx.trycloudflare.com

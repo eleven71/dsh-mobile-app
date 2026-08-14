@@ -7,6 +7,7 @@
 //   - 根路径 302 → /mobile（手机端只暴露自研移动 UI）
 //   - WS 升级只放行 /api/events.{mux,host}（收窄转发面）
 import { createServer, request as httpRequest } from 'node:http'
+import { randomBytes } from 'node:crypto'
 import { connect as netConnect } from 'node:net'
 import { createGzip } from 'node:zlib'
 import { readFileSync } from 'node:fs'
@@ -26,6 +27,15 @@ function injectMobileCss(html) {
     return html.replace('</head>', `<style data-dsh-mobile-remote>${MOBILE_CSS}</style></head>`)
   }
   return html
+}
+
+/** WS 认证 cookie 引导：页面加载即 fetch token 端点种 cookie（fetch 带页面 Basic Auth 凭证），
+ *  浏览器 WebSocket 握手自动带 same-origin cookie——修复桌面浏览器 WS 不带认证头导致的
+ *  实时数据缺失（插件配置卡片/部分设置项不渲染） */
+const WS_AUTH_SCRIPT = '<script data-dsh-ws-auth>fetch("/__dsh_ws_token",{credentials:"include"}).catch(()=>{})<\/script>'
+function injectWsAuth(html) {
+  if (html.includes('data-dsh-ws-auth')) return html
+  return html.replace('</head>', WS_AUTH_SCRIPT + '</head>')
 }
 
 /**
@@ -108,12 +118,29 @@ export function createAuthProxy({ port, upstreamPort, user = 'dsh', password, on
       return
     }
     recordSuccess(ip)
+    // WS 认证 cookie 签发端点：页面注入脚本 fetch 此端点（带 Basic Auth），
+    // 代理校验密码后 Set-Cookie 种 WS 凭证——浏览器 WS 握手自动带 cookie
+    if (req.url === '/__dsh_ws_token') {
+      if (!authorized(req)) {
+        res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="DSH Remote"' })
+        res.end('401 Unauthorized')
+        return
+      }
+      const token = issueWsToken()
+      res.writeHead(200, {
+        'Set-Cookie': `dsh_ws_auth=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=43200`,
+        'Cache-Control': 'no-store',
+      })
+      res.end('ok')
+      return
+    }
     // 旧移动端入口 /mobile → 官方 UI（自研移动 UI 已废弃：官方 UI + 适配 CSS 方案）
     if (req.url.startsWith('/mobile')) {
       res.writeHead(302, { location: '/' })
       res.end()
       return
     }
+
     // Host/Origin 统一改写为 loopback 形式：
     // 1) 隧道域名每次重启会变，改写后 DSH 端无需配置 trusted-host
     // 2) 官方把 settings/credentials 等特权方法锁 loopback——改写后远程也能
@@ -135,9 +162,12 @@ export function createAuthProxy({ port, upstreamPort, user = 'dsh', password, on
           upRes.setEncoding('utf8')
           upRes.on('data', (chunk) => { htmlBody += chunk })
           upRes.on('end', () => {
-            const patched = injectViewportMeta(injectMobileCss(htmlBody))
+            const patched = injectViewportMeta(injectWsAuth(injectMobileCss(htmlBody)))
             const h = { ...upRes.headers }
             delete h['content-length']
+            // HTML 内含注入的适配 CSS/viewport meta——禁止设备缓存旧版（WebView/浏览器
+            // 缓存旧 HTML 会让用户看到旧布局：设置按钮缺失、布局错乱，多次实测踩坑）
+            h['cache-control'] = 'no-cache'
             res.writeHead(upRes.statusCode, h)
             res.end(patched)
           })
@@ -170,8 +200,27 @@ export function createAuthProxy({ port, upstreamPort, user = 'dsh', password, on
   // WebSocket 升级隧道：DSH 的实时通道（events.mux / events.host）走 WebSocket
   // （审批/提问推送、会话实时事件）。认证 + Host/Origin 改写与普通转发一致，
   // 握手成功后双向裸流透传。
+  //
+  // 浏览器 WebSocket 握手不带 Basic Auth 头（Chrome 桌面/移动行为）→ WS 全 401
+  // → settingsScope 实时数据收不到 → 插件配置卡片/部分设置按钮不渲染（平板实测）。
+  // 解法：页面加载时注入脚本 fetch 带认证的 token 端点，Set-Cookie 种 WS 认证 cookie
+  // （HttpOnly，只有过密码者能拿到），浏览器 WS 握手自动带 same-origin cookie。
+  const wsTokens = new Map() // token -> expiresAt
+  const issueWsToken = () => {
+    const token = randomBytes(24).toString('hex')
+    wsTokens.set(token, Date.now() + 12 * 3600e3)
+    return token
+  }
+  const wsCookieOk = (req) => {
+    const m = /dsh_ws_auth=([^;]+)/.exec(req.headers.cookie ?? '')
+    if (!m) return false
+    const exp = wsTokens.get(m[1])
+    if (!exp) return false
+    if (Date.now() > exp) { wsTokens.delete(m[1]); return false }
+    return true
+  }
   server.on('upgrade', (req, socket, head) => {
-    if (!authorized(req)) {
+    if (!authorized(req) && !wsCookieOk(req)) {
       socket.write('HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm="DSH Remote"\r\n\r\n')
       socket.destroy()
       return

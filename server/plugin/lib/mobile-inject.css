@@ -97,6 +97,14 @@
     align-items: center !important;
     gap: 4px !important;
   }
+  /* navTitle（"设置"标题）：官方 column 布局下 width:100% 撑满——改 row+wrap 后
+     366px 超容器 12px（巡检溢出源，右缘顶到视口边缘），收为内容区宽不溢出 */
+  [class$="_panel"] [class*="_nav"] [class*="_navTitle"] {
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+    flex: 0 1 auto !important;
+  }
   /* nav tab（VOzbGW_navCell）：官方 cell 带 flex 拉伸——row+wrap 下被撑成
      334×350 巨块、图标 306px（用户实测"巨大无比的图标"）。
      约束为紧凑横排标签：不拉伸 + 小图标 */
