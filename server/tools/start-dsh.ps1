@@ -126,13 +126,17 @@ while ($true) {
   $healthTick = 0
   while (-not $proc.HasExited) {
     Start-Sleep -Milliseconds 800
-    # ---- dsh web crash watchdog: ~10s tick; proxy (8082) lives inside dsh web,
-    #      so a crashed dsh web must be restarted or the tunnel points nowhere ----
+    # ---- dsh web crash watchdog: ~10s tick. Check BOTH ports:
+    #      3080 (dsh web) and 8082 (auth proxy - lives inside dsh web but can die
+    #      silently if the plugin fails to load after a DSH upgrade). Only checking
+    #      3080 would leave a dead 8082 unnoticed -> silent outage on the phone.
     $healthTick++
     if ($healthTick -ge 12) {
       $healthTick = 0
-      if (-not (Get-NetTCPConnection -LocalPort 3080 -State Listen -ErrorAction SilentlyContinue)) {
-        Write-Host '[start-dsh] dsh web not listening, restarting...' -ForegroundColor Yellow
+      $up3080 = [bool](Get-NetTCPConnection -LocalPort 3080 -State Listen -ErrorAction SilentlyContinue)
+      $up8082 = [bool](Get-NetTCPConnection -LocalPort 8082 -State Listen -ErrorAction SilentlyContinue)
+      if (-not $up3080 -or -not $up8082) {
+        Write-Host ('[start-dsh] dsh web(3080:' + $up3080 + ') proxy(8082:' + $up8082 + ') not healthy, restarting...') -ForegroundColor Yellow
         Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','start','dsh web' -WindowStyle Minimized
         Start-Sleep -Seconds 6
       }
