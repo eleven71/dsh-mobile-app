@@ -38,8 +38,15 @@
    - `DOMAIN`：你的子域名（如 `mydsh.de5.net`）
    - `SUBDOMAIN_ID`：DNSHE 控制台里该子域名的 ID
    - `DNSHE_KEY` / `DNSHE_SECRET`：上一步的 API 密钥
-2. 编辑 `server/plugin/cordis.patch.yml`，把 `user` / `password` 改成**你自己的登录凭证**
-   （手机 App 登录时要用，请记好；不要把密码提交到公开仓库）。
+2. 配置登录凭证（手机 App 登录时要用，请记好；不要把密码提交到公开仓库），二选一：
+   - **默认凭证**：不配置任何东西。插件首次启动自动生成密码并写入
+     `~/.dsh/mobile-remote.auth`（用户名固定 `dsh`），用记事本打开该文件查看密码；
+   - **自定义凭证**：编辑 `server/plugin/cordis.patch.yml`，在 `web-runtime` 的
+     `config` 下加两行（缩进与 `trustedHosts` 同级）：
+     ```yaml
+         user: your-name
+         password: your-strong-password
+     ```
 
 ## 五、安装插件到 DSH
 
@@ -79,10 +86,14 @@
 
 ## 安全须知
 
-- **密码即边界**：`cordis.patch.yml` 里的 `user/password` 是唯一认证，
-  请设强密码，**不要**提交到公开仓库；
+- **密码即边界**：插件认证代理是唯一认证（默认凭证见 `~/.dsh/mobile-remote.auth`，
+  或 `cordis.patch.yml` 自定义 `user/password`），请设强密码，**不要**提交到公开仓库；
 - **`server/tools/dsh-config.txt`** 含 DNSHE API 密钥，已在 `.gitignore` 中排除，勿提交；
-- 远程访问下，DSH 的 16 个特权方法（设置/凭据修改等）被官方锁死（403），属设计如此；
+- DSH 预览版的远程限制：远程浏览器（隧道域名）下「插件配置卡片」「打开配置文件」按钮
+  默认不渲染（官方把远程 settings 降级为进程内模式）。运行一次
+  `powershell -ExecutionPolicy Bypass -File server/tools/apply-isloopback-patch.ps1`
+  即可解除（重启 `dsh web` 生效；**DSH 升级后需重跑**）；
+- App 端仅接受 `https://` 地址（明文 http 会泄露 Basic Auth 密码）；
 - 免费隧道带宽有限，打开超大会话会稍慢，属正常现象。
 
 ## 故障排查

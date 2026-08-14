@@ -8,3 +8,6 @@ local.properties
 captures/
 .externalNativeBuild/
 .cxx/
+
+# 密钥文件（勿提交）
+server/tools/dsh-config.txt

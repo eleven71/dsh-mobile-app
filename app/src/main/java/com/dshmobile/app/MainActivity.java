@@ -116,11 +116,20 @@ public class MainActivity extends Activity {
 
     /** 加载配置的地址；若填的是域名（自动发现模式），先经 DoH 解析出当前隧道域名。 */
     private void loadConfigured(String url) {
-        if (url.startsWith("http")) {
-            web.loadUrl(url);
+        String u = url.trim();
+        // 全链路 HTTPS（cloudflared 隧道）：拒绝明文 http，防止 Basic Auth 密码被中间人嗅探
+        if (u.startsWith("https://")) {
+            web.loadUrl(u);
             return;
         }
-        final String host = url.trim();
+        if (u.startsWith("http://")) {
+            connStatus.setText("仅支持 https 地址");
+            android.widget.Toast.makeText(MainActivity.this,
+                    "请使用 https:// 开头的地址（明文 http 会泄露密码）",
+                    android.widget.Toast.LENGTH_LONG).show();
+            return;
+        }
+        final String host = u;
         connStatus.setText("自动发现中…");
         new Thread(() -> {
             final String tunnel = dohResolve(host);
@@ -184,7 +193,7 @@ public class MainActivity extends Activity {
         ll.setPadding(pad, pad / 2, pad, 0);
 
         EditText url = new EditText(this);
-        url.setHint("服务器地址，如 http://192.168.1.100:8082/mobile");
+        url.setHint("服务器地址，如 https://xxx.trycloudflare.com/mobile");
         url.setText(prefs.getString(KEY_URL, ""));
         url.setSingleLine(true);
 

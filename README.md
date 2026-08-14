@@ -35,19 +35,23 @@ https://<你的固定域名>/mobile   ← 你电脑上的 mobile-remote 认证�
 
 1. 手机上打开 App → 首次启动自动弹出设置；
 2. **服务器地址**填你自己的固定域名（如 `mydsh.de5.net`，自动发现模式），或完整地址
-   `https://xxx.trycloudflare.com/mobile`；
-   **用户名 / 密码**填你服务器上 mobile-remote 插件配置的凭证（不是 API Key，是
-   `cordis.patch.yml` 里 `user` / `password` 的值）；
+   `https://xxx.trycloudflare.com/mobile`（**仅支持 https**，明文 http 会泄露密码）；
+   **用户名 / 密码**：你部署 mobile-remote 插件时配置的凭证——默认用户名为 `dsh`，
+   密码在服务器上 `~/.dsh/mobile-remote.auth`（自动生成）；也可在 `cordis.patch.yml`
+   的 `web-runtime` config 下显式配置 `user` / `password` 自定义（见 DEPLOY.md）；
 3. 保存即连接，之后打开 App 直接进入 DSH 聊天界面。
 4. 服务器未启动时 App 会显示"连接失败"——先在服务器电脑上运行
-   `tools/start-dsh.ps1`。
+   `server/tools/start-dsh.ps1`。
 
 ## 注意
 
 - 连接走 HTTPS 隧道；请勿把你的服务器密码提交到公开仓库；
-- 每次构建使用同一把 release 签名（工件里有 `release-keystore`），可直接覆盖安装升级；
-  若丢失 keystore，新版本需先卸载旧版再安装；
-- 远程修改 DSH 设置/凭据等 16 个特权方法仍被官方锁死（403），属设计如此。
+- **签名**：Fork 自行构建的 APK 每次构建签名不同（CI 每次生成新 keystore），
+  **升级需先卸载旧版**（会清除本地保存的地址/凭证，重装后重填一次）；
+  本仓库 Actions 手动运行（workflow_dispatch）会自动发布到 Releases，请以 Release 版为准；
+- DSH 预览版的远程限制：远程浏览器（隧道域名）下「插件配置卡片」「打开配置文件」按钮
+  默认不渲染（官方把远程 settings 降级为进程内模式）。可在服务器上运行
+  `server/tools/apply-isloopback-patch.ps1` 解除（重启 `dsh web` 生效；**DSH 升级后需重跑**）。
 
 ## 本地构建（可选）
 
