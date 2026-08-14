@@ -50,7 +50,8 @@
 
 ## 五、安装插件到 DSH
 
-1. 把 `server/plugin/` 目录复制到电脑某处，如 `C:\dsh-plugin-dev`；
+1. 把 `server/plugin/` 目录**整体**复制到电脑某处，如 `C:\dsh-plugin-dev`
+   （即 `C:\dsh-plugin-dev\package.json` 必须存在）；
 2. 在命令行执行：
 
    ```
