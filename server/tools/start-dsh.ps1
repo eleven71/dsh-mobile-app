@@ -41,16 +41,34 @@ function Update-Dnshe {
   param([string]$Cname)
   Write-Host ('[dns] sync {0} -> {1}' -f $DOMAIN, $Cname) -ForegroundColor Cyan
   $api = 'https://api005.dnshe.com/index.php?m=domain_hub&endpoint=dns_records'
-  $list = curl.exe -s -m 15 ($api + '&action=list&subdomain_id=' + $SUBDOMAIN_ID) -H ('X-API-Key: ' + $KEY) -H ('X-API-Secret: ' + $SECRET)
-  try { $records = ($list | ConvertFrom-Json).records } catch { $records = @() }
-  foreach ($r in $records) {
-    $del = ('{{"record_id":"{0}"}}' -f $r.record_id)
-    curl.exe -s -m 15 -X POST ($api + '&action=delete') -H ('X-API-Key: ' + $KEY) -H ('X-API-Secret: ' + $SECRET) -H 'Content-Type: application/json' -d $del | Out-Null
-    Write-Host ('[dns] removed old {0} {1}' -f $r.type, $r.content)
+  $hdr = @{ 'X-API-Key' = $KEY; 'X-API-Secret' = $SECRET }
+  # IMPORTANT: use Invoke-RestMethod, NOT curl.exe -d. PS 5.1 strips the double
+  # quotes when passing a JSON string to native exes -> server sees {type:CNAME}
+  # (no quotes) -> 'invalid type'. .NET call keeps the JSON intact.
+  try {
+    $list = Invoke-RestMethod -Uri ($api + '&action=list&subdomain_id=' + $SUBDOMAIN_ID) -Headers $hdr -Method Get -TimeoutSec 15
+  } catch {
+    Write-Host ('[dns] list FAILED: ' + $_.Exception.Message) -ForegroundColor Red
+    return
   }
-  $body = ('{{"subdomain_id":{0},"type":"CNAME","content":"{1}"}}' -f $SUBDOMAIN_ID, $Cname)
-  $res = curl.exe -s -m 15 -X POST ($api + '&action=create') -H ('X-API-Key: ' + $KEY) -H ('X-API-Secret: ' + $SECRET) -H 'Content-Type: application/json' -d $body
-  Write-Host ('[dns] ' + $res) -ForegroundColor Green
+  foreach ($r in @($list.records)) {
+    try {
+      $delBody = @{ record_id = $r.record_id } | ConvertTo-Json
+      $del = Invoke-RestMethod -Uri ($api + '&action=delete') -Headers $hdr -Method Post -ContentType 'application/json' -Body $delBody -TimeoutSec 15
+      if ($del.success) { Write-Host ('[dns] removed old {0} {1}' -f $r.type, $r.content) }
+      else { Write-Host ('[dns] delete FAILED: ' + ($del.message -join ',')) -ForegroundColor Yellow }
+    } catch {
+      Write-Host ('[dns] delete EXCEPTION: ' + $_.Exception.Message) -ForegroundColor Yellow
+    }
+  }
+  try {
+    $createBody = @{ subdomain_id = [long]$SUBDOMAIN_ID; type = 'CNAME'; content = $Cname } | ConvertTo-Json
+    $res = Invoke-RestMethod -Uri ($api + '&action=create') -Headers $hdr -Method Post -ContentType 'application/json' -Body $createBody -TimeoutSec 15
+    if ($res.success) { Write-Host ('[dns] OK: ' + ($res.message -join ',')) -ForegroundColor Green }
+    else { Write-Host ('[dns] create FAILED: ' + ($res.message -join ',')) -ForegroundColor Red }
+  } catch {
+    Write-Host ('[dns] create EXCEPTION: ' + $_.Exception.Message) -ForegroundColor Red
+  }
 }
 
 # 1) ensure dsh web is running
