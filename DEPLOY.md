@@ -73,12 +73,17 @@
 - 隧道域名一变，自动通过 DNSHE API 把你的固定域名 `mydsh.de5.net`
   指向最新隧道 → **手机永远访问固定域名，无需改配置**；
 - **dsh web 崩溃自愈**：每 ~10 秒巡检一次，崩溃自动重启；
-- 当前手机访问地址写入 `tools/last-phone-url.txt`，随时可查。
+- 当前手机访问地址写入 `tools/last-phone-url.txt`，随时可查；
+- **DNSHE 同步用 Invoke-RestMethod**（PS5.1 把含引号的 JSON 传给 curl.exe 会吞引号
+  导致 `invalid type`——勿改回 curl 方式）。
 
 > 首次运行时，脚本需要一点时间等隧道就绪；看到
 > `PHONE URL: https://mydsh.de5.net/mobile` 即成功。
-> **（可选）开机自启**：运行一次 `server/tools/install-autostart.ps1`，
-> 下次登录自动启动（隐藏窗口，单实例锁防重复）。
+> **（可选）开机自启 + 守护**：
+> - 运行一次 `server/tools/install-autostart.ps1`——下次登录自动启动（隐藏窗口）；
+> - 注册计划任务 `DSH-Remote-Watchdog`（每 5 分钟跑 `server/tools/dsh-remote-watchdog.ps1`，
+>   start-dsh.ps1 不在则拉起；全杀进程实测 60s 内自动恢复全链路）。
+>   两条都做 = 进程被外部杀掉也会自动复活。
 
 ## 七、手机端
 

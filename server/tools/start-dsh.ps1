@@ -147,14 +147,24 @@ while ($true) {
             Update-Dnshe -Cname $tunnelDomain
             $lastDomain = $tunnelDomain
             # sync current tunnel domain into plugin trustedHosts (cordis.patch.yml),
-            # so remote browsers pass the frontend trust fence (settings UI available)
+            # so remote browsers pass the frontend trust fence (settings UI available).
+            # REPLACE stale tunnel lines instead of appending - dead domains accumulate
+            # otherwise (6 stale entries observed 2026-08-15).
             $patchPath = Join-Path $PSScriptRoot '..\plugin\cordis.patch.yml'
             if (Test-Path $patchPath) {
               $patch = Get-Content $patchPath -Raw -Encoding UTF8
-              if ($patch -notmatch [regex]::Escape($tunnelDomain)) {
-                $patch = $patch -replace '(\s+- dsh\.remote)', "`$1`n      - $tunnelDomain"
-                Set-Content $patchPath -Value $patch -Encoding UTF8 -NoNewline
-                Write-Host ('[start-dsh] trustedHosts + ' + $tunnelDomain) -ForegroundColor DarkGray
+              # protect the current tunnel line with a placeholder, strip stale
+              # tunnel lines, then restore the current one (it is also trycloudflare.com)
+              $ph = '@@CURRENT_TUNNEL@@'
+              $tmp = $patch -replace [regex]::Escape("      - $tunnelDomain"), $ph
+              $cleaned = $tmp -replace '(?m)^\s+- [a-z0-9-]+\.trycloudflare\.com\r?\n', ''
+              $cleaned = $cleaned -replace [regex]::Escape($ph), "      - $tunnelDomain"
+              if ($cleaned -notmatch [regex]::Escape($tunnelDomain)) {
+                $cleaned = $cleaned -replace '(\s+- dsh\.remote)', "`$1`n      - $tunnelDomain"
+              }
+              if ($cleaned -ne $patch) {
+                Set-Content $patchPath -Value $cleaned -Encoding UTF8 -NoNewline
+                Write-Host ('[start-dsh] trustedHosts -> ' + $tunnelDomain) -ForegroundColor DarkGray
               }
             }
             $phoneUrl = 'https://' + $tunnelDomain

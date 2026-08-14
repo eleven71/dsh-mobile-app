@@ -51,8 +51,9 @@ https://<你的固定域名>/mobile   ← 你电脑上的 mobile-remote 认证�
   **升级需先卸载旧版**（会清除本地保存的地址/凭证，重装后重填一次）；
   本仓库 Actions 手动运行（workflow_dispatch）会自动发布到 Releases，请以 Release 版为准；
 - DSH 预览版的远程限制：远程浏览器（隧道域名）下「插件配置卡片」「打开配置文件」按钮
-  默认不渲染（官方把远程 settings 降级为进程内模式）。可在服务器上运行
-  `server/tools/apply-isloopback-patch.ps1` 解除（重启 `dsh web` 生效；**DSH 升级后需重跑**）。
+  默认不渲染（官方把远程 settings 降级为进程内模式）。`server/tools/start-dsh.ps1`
+  已内置自动检查/重打补丁（幂等，DSH 升级后只需重启脚本）；手动解除可运行
+  `server/tools/apply-isloopback-patch.ps1`（重启 `dsh web` 生效）。
 
 ## 本地构建（可选）
 
