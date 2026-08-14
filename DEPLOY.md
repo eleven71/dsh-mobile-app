@@ -15,13 +15,15 @@
 ## 二、获取本项目文件
 
 需要两份东西：本仓库的 `app-android/`（手机 App 源码，GitHub Actions 自动构建 APK）
-和服务端组件（`plugin/` 插件 + `tools/` 脚本）。
+和服务端组件（`server/plugin/` 插件 + `server/tools/` 脚本）。
 
 ```
-本项目根目录
-├── plugin/                 # DSH 插件：认证代理 + /mobile 手机界面
-├── tools/                  # 启动脚本 + 配置模板
-└── app-android/            # 手机 App（构建出 APK 后安装）
+本仓库根目录
+├── app/                    # 手机 App 源码
+├── server/
+│   ├── plugin/             # DSH 插件：认证代理 + /mobile 手机界面
+│   └── tools/              # 启动脚本 + 配置模板
+└── DEPLOY.md               # 本指南
 ```
 
 ## 三、注册免费域名（DNSHE）
@@ -32,16 +34,16 @@
 
 ## 四、配置
 
-1. 复制 `tools/dsh-config.example.txt` 为 `tools/dsh-config.txt`，填入：
+1. 复制 `server/tools/dsh-config.example.txt` 为 `server/tools/dsh-config.txt`，填入：
    - `DOMAIN`：你的子域名（如 `mydsh.de5.net`）
    - `SUBDOMAIN_ID`：DNSHE 控制台里该子域名的 ID
    - `DNSHE_KEY` / `DNSHE_SECRET`：上一步的 API 密钥
-2. 编辑 `plugin/cordis.patch.yml`，把 `user` / `password` 改成**你自己的登录凭证**
+2. 编辑 `server/plugin/cordis.patch.yml`，把 `user` / `password` 改成**你自己的登录凭证**
    （手机 App 登录时要用，请记好；不要把密码提交到公开仓库）。
 
 ## 五、安装插件到 DSH
 
-1. 把 `plugin/` 目录复制到电脑某处，如 `C:\dsh-plugin-dev`；
+1. 把 `server/plugin/` 目录复制到电脑某处，如 `C:\dsh-plugin-dev`；
 2. 在命令行执行：
 
    ```
@@ -56,7 +58,7 @@
 
 ## 六、一键启动（以后每天就这一步）
 
-双击 `tools/start-dsh.ps1`。它自动完成：
+双击 `server/tools/start-dsh.ps1`。它自动完成：
 
 - 启动 `dsh web`（如未运行）；
 - 启动 cloudflared 快速隧道；
@@ -79,7 +81,7 @@
 
 - **密码即边界**：`cordis.patch.yml` 里的 `user/password` 是唯一认证，
   请设强密码，**不要**提交到公开仓库；
-- **`tools/dsh-config.txt`** 含 DNSHE API 密钥，已在 `.gitignore` 中排除，勿提交；
+- **`server/tools/dsh-config.txt`** 含 DNSHE API 密钥，已在 `.gitignore` 中排除，勿提交；
 - 远程访问下，DSH 的 16 个特权方法（设置/凭据修改等）被官方锁死（403），属设计如此；
 - 免费隧道带宽有限，打开超大会话会稍慢，属正常现象。
 

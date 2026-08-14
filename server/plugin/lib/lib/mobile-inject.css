@@ -1,0 +1,111 @@
+/* DSH Remote 移动适配层 v2 — 手机视口下重构官方 UI 布局（功能不变）
+   选择器用 [class$="_xxx"] 按语义后缀匹配，抗 CSS Modules 哈希变化
+   数值规格直接取自 DeepSeek 手机端源码（chat.deepseek.com main.acdf90f72d.css，
+   2026-08-14 抓取反查）：
+     - 顶栏 height:60px（._2c74d7a / ._08dce46）
+     - 气泡 border-radius:22px、padding:10px 16px、font:16px/24px（.fbb737a4）
+     - 列表项 border-radius:16px、min-height:67px（._9d6668a）；手机端容器 padding:0 6px（._223dd7b）
+     - 输入框 textarea padding:12px 12px 0 16px、min-height:42px、16px/24px（._77cefa5 内 ._27c9245）
+     - 按钮胶囊：--dsl-button-border-radius:4096px（官方 token）
+   与官方 UI 的刻意差异（已记录）：保留 52px 侧边栏图标栏（官方窄屏导航入口） */
+@media (max-width: 640px) {
+  /* ── 1. 侧边栏：保留官方窄屏行为（52px 图标栏 = 导航入口，勿隐藏） ── */
+  [class$="_sidebarCol"] {
+    width: 52px !important;
+  }
+  /* ── 2. 主区自适应（官方 grid 自动分配剩余宽度） ── */
+
+  /* ── 3. 输入区固定底部（桌面悬浮设计 → 手机贴底，DeepSeek 式） ── */
+  [class$="_composerSeat"] {
+    position: fixed !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    top: auto !important;
+    z-index: 50;
+    background: var(--dsw-static-neutral-bluish-60, #f5f6f7);
+    padding: 8px 12px calc(env(safe-area-inset-bottom, 0px) + 8px) !important;
+    max-height: 40vh;
+  }
+  /* 输入框：DeepSeek 源码 ._77cefa5 ._27c9245（padding 12px 12px 0 16px、min-height 42px、
+     16px/24px 字号）+ 胶囊化观感（实测规格） */
+  [class$="_composerSeat"] textarea,
+  [class$="_composerSeat"] [contenteditable="true"] {
+    border-radius: 24px !important;
+    padding: 12px 12px 12px 16px !important;
+    font-size: 16px !important;
+    line-height: 24px !important;
+    min-height: 42px !important;
+    box-sizing: border-box !important;
+  }
+  /* 输入区上方的滚动区让出底部空间（按输入区实测高度） */
+  [class$="_scrollBody"] {
+    padding-bottom: 330px !important;
+  }
+  /* ── 4. hero/欢迎区压缩（「探索未至之境」区块：限高 + 隐藏空 body） ── */
+  [class$="_heroGlow"],
+  [class$="_heroWorkspaceRow"] {
+    margin: 0 !important;
+    padding: 8px !important;
+  }
+  [class$="_heroGlow"] {
+    max-height: 30vh !important;
+    overflow: hidden !important;
+  }
+  [class$="_headline"] {
+    padding: 8px 0 !important;
+  }
+  [class$="_headlineText"] {
+    font-size: 18px !important;
+  }
+  [class$="_previewBadge"] {
+    font-size: 11px !important;
+    padding: 2px 8px !important;
+  }
+  [class$="_body"] {
+    min-height: 0 !important;
+  }
+  /* ── 5. 触控目标放大（DeepSeek token：--dsl-button-border-radius:4096px 全胶囊） ── */
+  button {
+    min-height: 44px !important;
+    border-radius: 999px !important;
+  }
+  [class$="_iconButton"] {
+    min-width: 44px !important;
+    min-height: 44px !important;
+    border-radius: 50% !important;
+  }
+  input, textarea, [contenteditable="true"] {
+    font-size: 16px !important;
+  }
+  /* ── 6. 会话列表：DeepSeek 源码（容器 0 6px；项 border-radius:16px、10px 12px、16px/24px） ── */
+  [class$="_listArea"] {
+    gap: 4px !important;
+    padding: 0 6px !important;
+  }
+  [class$="_listArea"] [class$="_item"],
+  [class$="_listArea"] [class$="_row"],
+  [class$="_listArea"] [class$="_entry"] {
+    padding: 10px 12px !important;
+    font-size: 16px !important;
+    line-height: 24px !important;
+    border-radius: 16px !important;
+    min-height: 44px !important;
+  }
+  /* ── 7. 聊天气泡：DeepSeek 源码 .fbb737a4（border-radius:22px、16px/24px） ── */
+  [class$="_message"] [class$="_bubble"],
+  [class$="_messageBody"],
+  [class$="_turn"] [class$="_card"] {
+    border-radius: 22px !important;
+    font-size: 16px !important;
+    line-height: 24px !important;
+  }
+  /* ── 8. 顶栏：DeepSeek 源码 height:60px + 安全区（._2c74d7a / ._08dce46） ── */
+  [class$="_topbar"],
+  [class$="_headerRow"],
+  [class$="_conversationHeader"] {
+    min-height: calc(env(safe-area-inset-top, 0px) + 60px) !important;
+    padding: calc(env(safe-area-inset-top, 0px)) 12px 0 !important;
+    box-sizing: border-box !important;
+  }
+}

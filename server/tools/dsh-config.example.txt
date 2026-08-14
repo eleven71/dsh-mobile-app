@@ -1,0 +1,12 @@
+# dsh-config.txt - start-dsh.ps1 配置文件（复制自 dsh-config.example.txt 后填写）
+# 不要把这个文件提交到公开仓库！
+
+# 你的固定域名（DNSHE 注册的免费子域名，如 mydsh.de5.net）
+DOMAIN=mydsh.de5.net
+
+# DNSHE 控制台里该子域名的 ID（API 查询 subdomains 列表可得；或问服务商）
+SUBDOMAIN_ID=0
+
+# DNSHE API 密钥（控制台 -> API 管理 创建）
+DNSHE_KEY=在此填写
+DNSHE_SECRET=在此填写

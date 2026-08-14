@@ -1,0 +1,21 @@
+# dsh-plugin-mobile-remote - patch config for your own deployment
+# Replace your-user / your-password with YOUR credentials (used by the phone app to log in).
+# Do NOT commit real passwords to a public repo.
+- id: directory-picker
+  disabled: true
+
+- insert:
+    - id: mobile-remote
+      name: 'dsh-plugin-mobile-remote'
+      config:
+        enabled: true
+        user: 'your-user'
+        password: 'your-password'
+        upstreamPort: 3080
+        tunnelEnabled: false
+
+- insert:
+    - id: directory-picker-browse
+      name: '@deepseek-ai/dsh-host-directory-picker-browse'
+    - id: ui-directory-picker-browse
+      name: '@deepseek-ai/dsh-client-ui-directory-picker-browse'
