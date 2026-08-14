@@ -68,13 +68,17 @@
 
 双击 `server/tools/start-dsh.ps1`。它自动完成：
 
-- 启动 `dsh web`（如未运行）；
+- 启动 `dsh web`（如未运行）并**自动检查/重打 isLoopback 补丁**（DSH 升级后无需手动）；
 - 启动 cloudflared 快速隧道；
 - 隧道域名一变，自动通过 DNSHE API 把你的固定域名 `mydsh.de5.net`
-  指向最新隧道 → **手机永远访问固定域名，无需改配置**。
+  指向最新隧道 → **手机永远访问固定域名，无需改配置**；
+- **dsh web 崩溃自愈**：每 ~10 秒巡检一次，崩溃自动重启；
+- 当前手机访问地址写入 `tools/last-phone-url.txt`，随时可查。
 
 > 首次运行时，脚本需要一点时间等隧道就绪；看到
 > `PHONE URL: https://mydsh.de5.net/mobile` 即成功。
+> **（可选）开机自启**：运行一次 `server/tools/install-autostart.ps1`，
+> 下次登录自动启动（隐藏窗口，单实例锁防重复）。
 
 ## 七、手机端
 

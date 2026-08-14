@@ -21,7 +21,8 @@ https://<你的固定域名>/mobile   ← 你电脑上的 mobile-remote 认证�
 - 支持两种地址：**固定域名**（如 `mydsh.de5.net`，App 自动通过 DNS 发现当前隧道）或
   **完整地址**（如 `https://xxx.trycloudflare.com/mobile`）
 - WebView 原生支持 WebSocket → 审批弹窗、实时事件在手机端完全可用
-- 账号密码保存在手机本地设置，只填一次
+- 账号密码保存在手机本地设置，只填一次；**密码经 Android Keystore（系统安全硬件）加密存储**，
+  旧版明文密码首次启动自动迁移，升级无感
 
 ## 构建（GitHub Actions 在线构建，本机零安装）
 
