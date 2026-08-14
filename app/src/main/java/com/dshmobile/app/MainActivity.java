@@ -54,6 +54,8 @@ public class MainActivity extends Activity {
         setContentView(R.layout.activity_main);
 
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        // 升级迁移：旧版明文密码 → Keystore 加密存储（一次性，无感）
+        migrateLegacyPassword();
         web = findViewById(R.id.web);
         connStatus = findViewById(R.id.connStatus);
 
@@ -74,7 +76,7 @@ public class MainActivity extends Activity {
             public void onReceivedHttpAuthRequest(WebView view, HttpAuthHandler handler, String host, String realm) {
                 // 自动携带内置凭证，手机端无需再输密码
                 String user = prefs.getString(KEY_USER, "dsh");
-                String pass = prefs.getString(KEY_PASS, "");
+                String pass = CredentialStore.decrypt(prefs.getString(KEY_PASS, ""));
                 if (!pass.isEmpty()) {
                     handler.proceed(user, pass);
                 } else {
@@ -111,6 +113,17 @@ public class MainActivity extends Activity {
             showSettings();
         } else {
             loadConfigured(url);
+        }
+    }
+
+    /** 升级迁移：旧版明文密码 → Keystore 加密存储（一次性，无感）。 */
+    private void migrateLegacyPassword() {
+        String p = prefs.getString(KEY_PASS, "");
+        if (!p.isEmpty() && !CredentialStore.isEncrypted(p)) {
+            String enc = CredentialStore.encrypt(p);
+            if (enc != null) {
+                prefs.edit().putString(KEY_PASS, enc).apply();
+            }
         }
     }
 
@@ -204,7 +217,7 @@ public class MainActivity extends Activity {
 
         EditText pass = new EditText(this);
         pass.setHint("密码");
-        pass.setText(prefs.getString(KEY_PASS, ""));
+        pass.setText(CredentialStore.decrypt(prefs.getString(KEY_PASS, "")));
         pass.setSingleLine(true);
 
         ll.addView(url);
@@ -217,10 +230,12 @@ public class MainActivity extends Activity {
                 .setView(ll)
                 .setPositiveButton("保存并连接", (d, w) -> {
                     String u = url.getText().toString().trim();
+                    // 密码走 Keystore 加密；加密失败宁可存空（下次重填）也不留明文
+                    String encPass = CredentialStore.encrypt(pass.getText().toString());
                     prefs.edit()
                             .putString(KEY_URL, u)
                             .putString(KEY_USER, user.getText().toString().trim())
-                            .putString(KEY_PASS, pass.getText().toString())
+                            .putString(KEY_PASS, encPass == null ? "" : encPass)
                             .apply();
                     if (!u.isEmpty()) loadConfigured(u);
                 })

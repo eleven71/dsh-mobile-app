@@ -62,6 +62,27 @@ if (-not (Get-NetTCPConnection -LocalPort 3080 -State Listen -ErrorAction Silent
   Write-Host '[start-dsh] dsh web already running' -ForegroundColor DarkGray
 }
 
+# 1.5) ensure the isLoopback frontend patch survives DSH upgrades (idempotent:
+#      already-applied -> skip; DSH changed client.js -> loud failure, no blind overwrite)
+$PATCH_SCRIPT = Join-Path $PSScriptRoot '..\app-android\server\tools\apply-isloopback-patch.ps1'
+if (Test-Path $PATCH_SCRIPT) {
+  $patchOut = & powershell -NoProfile -ExecutionPolicy Bypass -File $PATCH_SCRIPT 2>&1
+  if ($LASTEXITCODE -eq 0) {
+    $patchText = ($patchOut | Out-String).Trim()
+    if ($patchText -match 'Already applied') {
+      Write-Host '[patch] isLoopback patch OK (in place)' -ForegroundColor DarkGray
+    } else {
+      Write-Host "[patch] $patchText" -ForegroundColor Green
+      Write-Host '[patch] just applied - restart "dsh web" so the frontend serves the patched client.js' -ForegroundColor Yellow
+    }
+  } else {
+    Write-Host ("[patch] FAILED: " + ($patchOut | Out-String).Trim()) -ForegroundColor Red
+    Write-Host '[patch] plugin config cards may be unavailable. DSH changed client.js layout? See HANDOFF pit 23' -ForegroundColor Yellow
+  }
+} else {
+  Write-Host '[patch] apply-isloopback-patch.ps1 missing (app-android gone?), skipping patch check' -ForegroundColor DarkGray
+}
+
 # 2) quick tunnel loop: capture domain -> sync DNS -> reconnect
 Write-Host '[start-dsh] starting tunnel, watching for domain...' -ForegroundColor Cyan
 $lastDomain = ''
@@ -83,30 +104,45 @@ while ($true) {
   Remove-Item "$LOG.out" -ErrorAction SilentlyContinue
   $proc = Start-Process -FilePath $CF -ArgumentList 'tunnel','--url','http://127.0.0.1:8082' `
     -WindowStyle Hidden -RedirectStandardError $LOG -RedirectStandardOutput "$LOG.out" -PassThru
-  $domain = ''
+  $tunnelDomain = ''
+  $healthTick = 0
   while (-not $proc.HasExited) {
     Start-Sleep -Milliseconds 800
+    # ---- dsh web crash watchdog: ~10s tick; proxy (8082) lives inside dsh web,
+    #      so a crashed dsh web must be restarted or the tunnel points nowhere ----
+    $healthTick++
+    if ($healthTick -ge 12) {
+      $healthTick = 0
+      if (-not (Get-NetTCPConnection -LocalPort 3080 -State Listen -ErrorAction SilentlyContinue)) {
+        Write-Host '[start-dsh] dsh web not listening, restarting...' -ForegroundColor Yellow
+        Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','start','dsh web' -WindowStyle Minimized
+        Start-Sleep -Seconds 6
+      }
+    }
     if (Test-Path $LOG) {
       $txt = Get-Content $LOG -Raw -ErrorAction SilentlyContinue
       if ($txt) {
         $m = [regex]::Match($txt, 'https://([a-z0-9-]+\.trycloudflare\.com)')
         if ($m.Success) {
-          $domain = $m.Groups[1].Value
-          if ($domain -ne $lastDomain) {
-            Update-Dnshe -Cname $domain
-            $lastDomain = $domain
+          $tunnelDomain = $m.Groups[1].Value
+          if ($tunnelDomain -ne $lastDomain) {
+            Update-Dnshe -Cname $tunnelDomain
+            $lastDomain = $tunnelDomain
             # sync current tunnel domain into plugin trustedHosts (cordis.patch.yml),
             # so remote browsers pass the frontend trust fence (settings UI available)
             $patchPath = Join-Path $PSScriptRoot '..\plugin\cordis.patch.yml'
             if (Test-Path $patchPath) {
               $patch = Get-Content $patchPath -Raw -Encoding UTF8
-              if ($patch -notmatch [regex]::Escape($domain)) {
-                $patch = $patch -replace '(\s+- dsh\.remote)', "`$1`n      - $domain"
+              if ($patch -notmatch [regex]::Escape($tunnelDomain)) {
+                $patch = $patch -replace '(\s+- dsh\.remote)', "`$1`n      - $tunnelDomain"
                 Set-Content $patchPath -Value $patch -Encoding UTF8 -NoNewline
-                Write-Host ('[start-dsh] trustedHosts + ' + $domain) -ForegroundColor DarkGray
+                Write-Host ('[start-dsh] trustedHosts + ' + $tunnelDomain) -ForegroundColor DarkGray
               }
             }
-            Write-Host ('[start-dsh] PHONE URL: https://' + $domain + ' (fixed domain https://' + $DOMAIN + ' when DNSHE is healthy)') -ForegroundColor Green
+            $phoneUrl = 'https://' + $tunnelDomain
+            Write-Host ('[start-dsh] PHONE URL: ' + $phoneUrl + ' (fixed domain https://' + $DOMAIN + ' when DNSHE is healthy)') -ForegroundColor Green
+            # persist current phone URL (autostart runs hidden - user reads this file)
+            Set-Content -Path (Join-Path $PSScriptRoot 'last-phone-url.txt') -Value $phoneUrl -Encoding ASCII
           }
         }
       }
