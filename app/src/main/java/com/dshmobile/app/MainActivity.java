@@ -198,7 +198,11 @@ public class MainActivity extends Activity {
                 int type = a.optInt("type", -1);
                 String data = a.optString("data", "");
                 if ((type == 5 || type == 16) && data.contains("trycloudflare.com")) {
-                    return data.replaceFirst("\\.$", "").trim();
+                    // 安全加固:严格校验为合法 trycloudflare 隧道主机名,防 DNS 污染注入
+                    String cleaned = data.replaceFirst("\\.$", "").trim();
+                    if (cleaned.matches("^[a-z0-9-]+(\\.[a-z0-9-]+)*\\.trycloudflare\\.com$")) {
+                        return cleaned;
+                    }
                 }
             }
             return null;
@@ -226,6 +230,8 @@ public class MainActivity extends Activity {
 
         EditText pass = new EditText(this);
         pass.setHint("密码");
+        // 安全加固:密码输入遮罩,防肩窥/截屏泄露
+        pass.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
         pass.setText(CredentialStore.decrypt(prefs.getString(KEY_PASS, "")));
         pass.setSingleLine(true);
 

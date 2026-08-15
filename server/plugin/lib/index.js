@@ -52,20 +52,39 @@ function loadCredentials(file) {
       if (k === 'user' || k === 'password') creds[k] = line.slice(p + 1).trim()
     }
   }
-  if (creds.password) return creds // { user: string|null, password: string }
-  if (lines.length === 1) return { user: null, password: lines[0] } // legacy single-line
+  if (creds.password) {
+    // 安全加固:拒绝弱密码(短于 8 位),防远程爆破
+    if (creds.password.length < 8) throw new Error('密码过短(至少 8 位),请修改 ' + file)
+    return creds // { user: string|null, password: string }
+  }
+  if (lines.length === 1) {
+    if (lines[0].length < 8) throw new Error('密码过短(至少 8 位),请修改 ' + file)
+    return { user: null, password: lines[0] } // legacy single-line
+  }
   return null
 }
 
 function loadOrCreatePassword(file) {
   if (existsSync(file)) {
     const pw = readFileSync(file, 'utf8').trim()
-    if (pw) return pw
+    if (pw) {
+      // 安全加固:已有密码文件同样拒绝弱密码
+      if (pw.length < 8) throw new Error('密码过短(至少 8 位),请修改 ' + file)
+      return pw
+    }
   }
   const pw = randomBytes(9).toString('base64url')
   mkdirSync(join(file, '..'), { recursive: true })
   writeFileSync(file, pw, { mode: 0o600 })
   return pw
+}
+
+/** 校验用户显式配置的密码强度(config.password 路径,与凭证文件同标准) */
+function assertStrongPassword(password, source) {
+  if (typeof password === 'string' && password.length > 0 && password.length < 8) {
+    throw new Error(`密码过短(至少 8 位):${source} 配置的密码仅 ${password.length} 位`)
+  }
+  return password
 }
 
 function findCloudflared(explicit) {
@@ -89,9 +108,10 @@ export function apply(ctx, config) {
   const passwordFile = config.passwordFile ?? defaultPasswordFile()
   // 凭证唯一来源：~/.dsh/mobile-remote.auth（user/password 行，不进 git）。
   // 回退链：文件凭证 → config.user/password（脱敏部署场景）→ 自动生成密码 + 默认 user dsh
+  // 安全加固(复查发现 E):config 路径显式配置的密码同样要求 ≥8 位
   const cred = loadCredentials(passwordFile)
   const user = cred?.user ?? config.user ?? 'dsh'
-  const password = cred?.password ?? config.password ?? loadOrCreatePassword(passwordFile)
+  const password = cred?.password ?? assertStrongPassword(config.password, 'cordis.patch.yml') ?? loadOrCreatePassword(passwordFile)
 
   let proxyServer = null
   let tunnelProc = null
@@ -112,7 +132,7 @@ export function apply(ctx, config) {
         password,
         onError: (msg) => log(msg),
       })
-      log(`认证代理已启动：0.0.0.0:${config.proxyPort} → 127.0.0.1:${config.upstreamPort}（用户：${user}，密码见配置，勿外泄）`)
+      log(`认证代理已启动：127.0.0.1:${config.proxyPort} → 127.0.0.1:${config.upstreamPort}（用户：${user}，密码见配置，勿外泄）`)
     } catch (e) {
       log(`认证代理启动失败：${e.message}`)
       proxyServer = null

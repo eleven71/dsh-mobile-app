@@ -11,3 +11,7 @@ captures/
 
 # 密钥文件（勿提交）
 server/tools/dsh-config.txt
+# 运行期文件(含真实隧道地址,勿提交)
+server/tools/last-phone-url.txt
+server/tools/watchdog-last.log
+server/tools/quick-tunnel.log*

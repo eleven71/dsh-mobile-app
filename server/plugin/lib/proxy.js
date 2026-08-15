@@ -1,4 +1,4 @@
-// 认证代理（插件内嵌模块）：0.0.0.0:port → 127.0.0.1:upstreamPort
+// 认证代理（插件内嵌模块）：127.0.0.1:port → 127.0.0.1:upstreamPort
 // 安全模型：
 //   - 认证：Basic Auth 密码（timingSafeEqual）+ 失败限速（指数退避）
 //   - Host/Origin 统一改写为 127.0.0.1:upstreamPort（loopback 伪装）——DSH 官方把
@@ -58,7 +58,7 @@ export function createAuthProxy({ port, upstreamPort, user = 'dsh', password, on
   const upstream = { host: '127.0.0.1', port: upstreamPort }
 
   // ── 暴力破解防护：失败计数 + 指数退避（按来源 IP） ──
-  const failCount = new Map() // ip -> { count, lockedUntil }
+  const failCount = new Map() // ip -> { count, lockedUntil, strike }
   const FAIL_LIMIT = 5          // 连续失败次数
   const LOCK_BASE_MS = 10_000   // 首次锁定 10s，之后翻倍
   const LOCK_MAX_MS = 300_000   // 上限 5min
@@ -67,26 +67,38 @@ export function createAuthProxy({ port, upstreamPort, user = 'dsh', password, on
     const rec = failCount.get(ip)
     if (!rec) return false
     if (rec.lockedUntil && rec.lockedUntil > Date.now()) return true
-    if (rec.lockedUntil && rec.lockedUntil <= Date.now()) failCount.delete(ip)
+    if (rec.lockedUntil && rec.lockedUntil <= Date.now()) {
+      // 锁定过期:保留 strike(退避状态)以延续指数退避,清空锁定与失败计数
+      rec.lockedUntil = 0
+      rec.count = 0
+    }
     return false
   }
   function recordFailure(ip) {
-    const rec = failCount.get(ip) || { count: 0, lockedUntil: 0 }
+    const rec = failCount.get(ip) || { count: 0, lockedUntil: 0, strike: 0 }
     rec.count += 1
     if (rec.count >= FAIL_LIMIT) {
-      const lock = Math.min(LOCK_BASE_MS * 2 ** (rec.count - FAIL_LIMIT), LOCK_MAX_MS)
+      // 修复:指数退避按"连续锁定周期"递增(此前 count 立即归零,退避永远锁 10s)
+      const strike = (rec.strike || 0) + 1
+      rec.strike = strike
+      const lock = Math.min(LOCK_BASE_MS * 2 ** (strike - 1), LOCK_MAX_MS)
       rec.lockedUntil = Date.now() + lock
       rec.count = 0
-      onError(`IP ${ip} 认证失败过多，已锁定 ${Math.round(lock / 1000)}s（暴力破解防护）`)
+      onError(`IP ${ip} 认证失败过多，已锁定 ${Math.round(lock / 1000)}s（暴力破解防护，第${strike}次锁定）`)
     }
     failCount.set(ip, rec)
   }
   function recordSuccess(ip) { failCount.delete(ip) }
-  // 定期清理过期记录，防 Map 无限增长
+  /** 当前剩余锁定秒数(Retry-After 用),未锁定返回 0 */
+  function lockRemaining(ip) {
+    const rec = failCount.get(ip)
+    if (!rec || !rec.lockedUntil) return 0
+    return Math.max(1, Math.ceil((rec.lockedUntil - Date.now()) / 1000))
+  }
+  // 定期清理:只清空记录(无锁定/无计数/无退避状态),保留有 strike 的记录以延续退避
   setInterval(() => {
-    const now = Date.now()
     for (const [ip, rec] of failCount) {
-      if (rec.lockedUntil && rec.lockedUntil <= now) failCount.delete(ip)
+      if (!rec.lockedUntil && rec.count === 0 && !rec.strike) failCount.delete(ip)
     }
   }, 60_000).unref()
 
@@ -116,7 +128,7 @@ export function createAuthProxy({ port, upstreamPort, user = 'dsh', password, on
   const server = createServer((req, res) => {
     const ip = clientIp(req)
     if (rateLimited(ip)) {
-      res.writeHead(429, { 'Retry-After': '60' })
+      res.writeHead(429, { 'Retry-After': String(lockRemaining(ip)) })
       res.end('429 Too Many Requests')
       return
     }
@@ -232,7 +244,7 @@ export function createAuthProxy({ port, upstreamPort, user = 'dsh', password, on
     // 修复 E(复查建议):WS 通道同样接入限速/失败计数,防经隧道无限试密码
     const ip = clientIp(req)
     if (rateLimited(ip)) {
-      socket.write('HTTP/1.1 429 Too Many Requests\r\nRetry-After: 60\r\n\r\n')
+      socket.write('HTTP/1.1 429 Too Many Requests\r\nRetry-After: ' + lockRemaining(ip) + '\r\n\r\n')
       socket.destroy()
       return
     }
@@ -248,8 +260,8 @@ export function createAuthProxy({ port, upstreamPort, user = 'dsh', password, on
       socket.destroy()
       return
     }
-    // 路径白名单：只放行 DSH 的事件通道（收窄转发面）
-    if (!/^\/api\/events\.(mux|host)/.test(req.url)) {
+    // 放行路径白名单：只放行 DSH 的事件通道（收窄转发面，尾部锚定防前缀绕过）
+    if (!/^\/api\/events\.(mux|host)($|\/|\?)/.test(req.url)) {
       socket.write('HTTP/1.1 404 Not Found\r\n\r\n')
       socket.destroy()
       return
@@ -282,6 +294,6 @@ export function createAuthProxy({ port, upstreamPort, user = 'dsh', password, on
     if (e.code === 'EADDRINUSE') onError(`端口 ${port} 被占用——请修改 proxyPort 配置`)
     else onError('认证代理错误: ' + e.message)
   })
-  server.listen(port, '0.0.0.0')
+  server.listen(port, '127.0.0.1')
   return server
 }

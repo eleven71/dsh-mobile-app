@@ -56,11 +56,9 @@ jobs:
           name: dsh-mobile-apk
           path: app/build/outputs/apk/release/app-release.apk
 
-      - name: Upload keystore (keep for future updates)
-        uses: actions/upload-artifact@v7
-        with:
-          name: release-keystore
-          path: ${{ runner.temp }}/dsh-release.keystore
+      # 安全修复:不再上传 keystore 工件——公开仓库的 Actions 工件可被下载,
+      # keystore 泄露=签名劫持(攻击者可签名同包名恶意 APK 覆盖安装)。
+      # 签名密钥应由仓库 Secret 持久化,绝不以工件形式暴露。
 
       # 手动触发(Run workflow)时自动发布到 Releases 页：手机直接打开 Release 页下载 APK
       - name: Publish GitHub Release
