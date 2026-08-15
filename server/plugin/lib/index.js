@@ -45,9 +45,11 @@ function loadCredentials(file) {
   if (!existsSync(file)) return null
   const lines = readFileSync(file, 'utf8').split('\n').map((l) => l.trim()).filter(Boolean)
   const creds = {}
+  let hasKeyValue = false
   for (const line of lines) {
     const p = line.indexOf('=')
     if (p > 0) {
+      hasKeyValue = true
       const k = line.slice(0, p).trim().toLowerCase()
       if (k === 'user' || k === 'password') creds[k] = line.slice(p + 1).trim()
     }
@@ -57,6 +59,8 @@ function loadCredentials(file) {
     if (creds.password.length < 8) throw new Error('密码过短(至少 8 位),请修改 ' + file)
     return creds // { user: string|null, password: string }
   }
+  // 修复 F2:文件含 key=value 行但缺 password → 格式错误,不再把原始行误当密码
+  if (hasKeyValue) throw new Error('凭证文件缺少 password 行,请修改 ' + file)
   if (lines.length === 1) {
     if (lines[0].length < 8) throw new Error('密码过短(至少 8 位),请修改 ' + file)
     return { user: null, password: lines[0] } // legacy single-line
@@ -66,7 +70,18 @@ function loadCredentials(file) {
 
 function loadOrCreatePassword(file) {
   if (existsSync(file)) {
-    const pw = readFileSync(file, 'utf8').trim()
+    const raw = readFileSync(file, 'utf8')
+    const lines = raw.split('\n').map((l) => l.trim()).filter(Boolean)
+    const kv = lines.filter(l => l.includes('='))
+    if (kv.length > 0) {
+      // 修复 F2:key=value 格式文件 → 解析 password 行,解析不到抛错而非整文件当密码
+      const pwLine = kv.find(l => l.startsWith('password='))
+      if (!pwLine) throw new Error('凭证文件缺少 password 行,请修改 ' + file)
+      const pw = pwLine.slice('password='.length).trim()
+      if (pw.length < 8) throw new Error('密码过短(至少 8 位),请修改 ' + file)
+      return pw
+    }
+    const pw = raw.trim()
     if (pw) {
       // 安全加固:已有密码文件同样拒绝弱密码
       if (pw.length < 8) throw new Error('密码过短(至少 8 位),请修改 ' + file)
@@ -79,9 +94,10 @@ function loadOrCreatePassword(file) {
   return pw
 }
 
-/** 校验用户显式配置的密码强度(config.password 路径,与凭证文件同标准) */
+/** 校验用户显式配置的密码强度(config.password 路径,与凭证文件同标准)。
+ *  修复 F1:空字符串同样拒绝(此前 length>0 条件放过了空密码) */
 function assertStrongPassword(password, source) {
-  if (typeof password === 'string' && password.length > 0 && password.length < 8) {
+  if (typeof password === 'string' && password.length < 8) {
     throw new Error(`密码过短(至少 8 位):${source} 配置的密码仅 ${password.length} 位`)
   }
   return password

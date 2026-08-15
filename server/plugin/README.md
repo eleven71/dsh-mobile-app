@@ -15,8 +15,8 @@ npx @deepseek-ai/dsh web --trusted-host dsh.remote
 启动后插件自动完成三件事（日志可见）：
 
 ```
-[mobile-remote] 认证代理已启动：0.0.0.0:8082 → 127.0.0.1:3080（密码：xxxxx）
-[mobile-remote] 隧道已就绪：https://xxxx.trycloudflare.com（手机浏览器打开，输密码 xxxxx）
+[mobile-remote] 认证代理已启动：127.0.0.1:8082 → 127.0.0.1:3080（用户：dsh，密码见配置，勿外泄）
+[mobile-remote] 隧道已就绪：https://xxxx.trycloudflare.com（手机浏览器打开，登录凭证见插件配置）
 [mobile-remote] 手机扫码直达：[二维码]
 ```
 
@@ -43,7 +43,7 @@ npx @deepseek-ai/dsh web --trusted-host dsh.remote
 
 | 官方约束 | 我们的对策 |
 |---|---|
-| DSH 禁止绑定 0.0.0.0（官方安全设计，防止 RCE 暴露到网络） | 认证代理监听对外端口，DSH 保持 127.0.0.1 |
+| DSH 禁止绑定 0.0.0.0（官方安全设计，防止 RCE 暴露到网络） | 认证代理仅监听本机回环 127.0.0.1，远程访问一律经 cloudflared 隧道本地转发，DSH 保持 127.0.0.1 |
 | `trustedHosts` 明确**不是认证层**——任何拿到 URL 的人都能执行 shell | 认证代理是唯一认证边界：Basic Auth 密码校验（`timingSafeEqual` 防时序攻击） |
 | 原生目录选择器（`pickDirectory`）锁 loopback，远程一律 403 | 插件自动注入 **browse** 目录选择器（`listDirectory` API，远程可用）——无需手动改配置 |
 | 浏览器信任围栏校验 Host/Origin 一致性 | 认证代理统一改写 Host/Origin 为固定内部域名 `dsh.remote`，DSH 端 `--trusted-host dsh.remote` 一次配置，隧道域名怎么变都不受影响 |

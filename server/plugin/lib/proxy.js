@@ -156,7 +156,8 @@ export function createAuthProxy({ port, upstreamPort, user = 'dsh', password, on
       return
     }
     // 旧移动端入口 /mobile → 官方 UI（自研移动 UI 已废弃：官方 UI + 适配 CSS 方案）
-    if (req.url.startsWith('/mobile')) {
+    // 修复 F5b:精确匹配,防 /mobile* 前缀误伤
+    if (req.url === '/mobile' || req.url.startsWith('/mobile/')) {
       res.writeHead(302, { location: '/' })
       res.end()
       return
@@ -197,7 +198,8 @@ export function createAuthProxy({ port, upstreamPort, user = 'dsh', password, on
         // 大 JSON/文本响应流式 gzip：手机端拉取大会话历史(可达数 GB)时传输量降为 5-10%
         const acceptGzip = /gzip/i.test(req.headers['accept-encoding'] ?? '')
         const ctype = upCtype
-        const compress = acceptGzip && /json|text|javascript|xml/.test(ctype) && upRes.statusCode !== 204
+        // 修复 F5a:上游已压缩时不再二次 gzip
+        const compress = acceptGzip && /json|text|javascript|xml/.test(ctype) && upRes.statusCode !== 204 && !upRes.headers['content-encoding']
         if (compress) {
           const h = { ...upRes.headers }
           delete h['content-length']
