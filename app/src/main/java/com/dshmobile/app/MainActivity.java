@@ -46,6 +46,8 @@ public class MainActivity extends Activity {
     private WebView web;
     private SharedPreferences prefs;
     private TextView connStatus;
+    /** 当前允许提交凭证的服务器 host（安全校验：凭证只交给配置的服务器） */
+    private volatile String allowedHost = "";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -74,14 +76,19 @@ public class MainActivity extends Activity {
         web.setWebViewClient(new WebViewClient() {
             @Override
             public void onReceivedHttpAuthRequest(WebView view, HttpAuthHandler handler, String host, String realm) {
-                // 自动携带内置凭证，手机端无需再输密码
-                String user = prefs.getString(KEY_USER, "dsh");
-                String pass = CredentialStore.decrypt(prefs.getString(KEY_PASS, ""));
-                if (!pass.isEmpty()) {
-                    handler.proceed(user, pass);
-                } else {
-                    handler.cancel();
+                // 安全校验：只把凭证交给用户配置的服务器地址。
+                // 修复 HIGH-1：此前不校验 host，WebView 中任何页面/子资源触发
+                // 401 质询都会静默泄露 DSH 用户名密码（可控制整台电脑的钥匙）。
+                if (allowedHost != null && allowedHost.equalsIgnoreCase(host)) {
+                    // 自动携带内置凭证，手机端无需再输密码
+                    String user = prefs.getString(KEY_USER, "dsh");
+                    String pass = CredentialStore.decrypt(prefs.getString(KEY_PASS, ""));
+                    if (!pass.isEmpty()) {
+                        handler.proceed(user, pass);
+                        return;
+                    }
                 }
+                handler.cancel();
             }
 
             @Override
@@ -132,6 +139,7 @@ public class MainActivity extends Activity {
         String u = url.trim();
         // 全链路 HTTPS（cloudflared 隧道）：拒绝明文 http，防止 Basic Auth 密码被中间人嗅探
         if (u.startsWith("https://")) {
+            allowedHost = Uri.parse(u).getHost(); // 记录允许提交凭证的服务器
             web.loadUrl(u);
             return;
         }
@@ -148,6 +156,7 @@ public class MainActivity extends Activity {
             final String tunnel = dohResolve(host);
             new Handler(Looper.getMainLooper()).post(() -> {
                 if (tunnel != null && !tunnel.isEmpty()) {
+                    allowedHost = tunnel; // 记录解析出的隧道地址（自动发现模式）
                     web.loadUrl("https://" + tunnel + "/mobile");
                 } else {
                     connStatus.setText("自动发现失败");

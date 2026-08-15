@@ -91,8 +91,16 @@ export function createAuthProxy({ port, upstreamPort, user = 'dsh', password, on
   }, 60_000).unref()
 
   function clientIp(req) {
-    // cloudflared 在本机转发：拿真实来源需 cf-connecting-ip（Cloudflare 隧道附加）
-    return req.headers['cf-connecting-ip'] || req.socket.remoteAddress || 'unknown'
+    // cloudflared 在本机转发：拿真实来源需 cf-connecting-ip（Cloudflare 隧道附加）。
+    // 修复 MED-3：仅信任来自本机（cloudflared）连接的 cf-connecting-ip，
+    // 外部直连 8082 端口伪造该头将无法绕过限速。
+    const r = req.socket.remoteAddress || 'unknown'
+    if (r === '127.0.0.1' || r === '::1' || r === '::ffff:127.0.0.1') {
+      // 修复 F(复查建议):重复 cf-connecting-ip 头是数组,归一化取首个,保证限速 Map 键稳定
+      const v = req.headers['cf-connecting-ip']
+      return (Array.isArray(v) ? v[0] : v) || r
+    }
+    return r
   }
 
   function authorized(req) {
@@ -221,11 +229,20 @@ export function createAuthProxy({ port, upstreamPort, user = 'dsh', password, on
     return true
   }
   server.on('upgrade', (req, socket, head) => {
+    // 修复 E(复查建议):WS 通道同样接入限速/失败计数,防经隧道无限试密码
+    const ip = clientIp(req)
+    if (rateLimited(ip)) {
+      socket.write('HTTP/1.1 429 Too Many Requests\r\nRetry-After: 60\r\n\r\n')
+      socket.destroy()
+      return
+    }
     if (!authorized(req) && !wsCookieOk(req)) {
+      recordFailure(ip)
       socket.write('HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm="DSH Remote"\r\n\r\n')
       socket.destroy()
       return
     }
+    recordSuccess(ip)
     if (req.url.startsWith('/mobile')) {
       socket.write('HTTP/1.1 404 Not Found\r\n\r\n')
       socket.destroy()
