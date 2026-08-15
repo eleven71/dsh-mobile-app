@@ -4,7 +4,7 @@ DeepSeek Harness 的手机客户端：全屏 WebView 加载你自己电脑上 DS
 **通用客户端**：任何人下载后，填自己的服务器地址和账号密码即可连接自己的 DSH，
 不经过浏览器、不输入域名、密码自动携带。
 
-> 服务器端需要部署 [dsh-plugin-mobile-remote](https://github.com/hongshuxifan321/dsh-mobile-app)（含 `/mobile` 界面 + 认证代理 + 隧道脚本），见 [DEPLOY.md](./DEPLOY.md)。
+> 服务器端需要部署 [dsh-plugin-mobile-remote](https://github.com/hongshuxifan321/dsh-mobile-app)（认证代理 + 隧道脚本 + 移动适配），见 [DEPLOY.md](./DEPLOY.md)。
 
 ## 原理
 
@@ -39,7 +39,7 @@ https://<你的固定域名>/mobile   ← 你电脑上的 mobile-remote 认证�
    `https://xxx.trycloudflare.com/mobile`（**仅支持 https**，明文 http 会泄露密码）；
    **用户名 / 密码**：你部署 mobile-remote 插件时配置的凭证——默认用户名为 `dsh`，
    密码在服务器上 `~/.dsh/mobile-remote.auth`（自动生成）；也可在 `cordis.patch.yml`
-   的 `web-runtime` config 下显式配置 `user` / `password` 自定义（见 DEPLOY.md）；
+   的 `mobile-remote` 插件 `config` 块下显式配置 `user` / `password` 自定义（至少 8 位，见 DEPLOY.md）；
 3. 保存即连接，之后打开 App 直接进入 DSH 聊天界面。
 4. 服务器未启动时 App 会显示"连接失败"——先在服务器电脑上运行
    `server/tools/start-dsh.ps1`。

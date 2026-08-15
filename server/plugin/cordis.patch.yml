@@ -25,8 +25,8 @@
       name: '@deepseek-ai/dsh-client-ui-directory-picker-browse'
 
 # 4) web-runtime 补丁（trustedHosts 仅 dsh.remote 即满足运行（实测；见 HANDOFF 坑 23/29）；
-#    真实隧道域名只存在 ~/.dsh/mobile-remote.auth 的 domain 行——仓库内不写真实域名；
-#    start-dsh.ps1 在隧道变化时自动追加/清理运行时副本的隧道域名）
+#    凭证只存 ~/.dsh/mobile-remote.auth 的 user/password 行——仓库内不写真实凭证；
+#    隧道域名运行时写入 server/tools/last-phone-url.txt（已 gitignore），勿提交）
 - id: web-runtime
   config:
     printUrl: true

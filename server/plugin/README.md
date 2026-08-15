@@ -22,16 +22,9 @@ npx @deepseek-ai/dsh web --trusted-host dsh.remote
 
 手机浏览器打开隧道 URL → 输密码 → 完整操作 DSH（工作区、会话、文件浏览全可用）。
 
-## 独立移动端 UI（/mobile）
+## 移动端访问（/mobile 已废弃）
 
-除官方桌面 UI 的移动适配外，插件自带**独立移动端界面**（`/mobile`，扫码后手机默认落地页），零依赖原生实现（HTML/CSS/JS，无框架）：
-
-- **工作区 → 会话 → 聊天**三级导航；新建会话、会话标题/运行中状态、相对时间
-- **聊天**：用户/AI 气泡（DeepSeek 设计语言：22px 圆角、16px/24px 字号）、深度思考折叠块、工具调用行（可展开参数/结果）、流式增量渲染、自动轮询刷新（运行中 2s / 空闲 4s）
-- **发送/停止生成**、模型选择底部抽屉（provider 分组 + 思考强度）、暗色模式、系统上下文注入过滤
-- 安全边界与主路径一致：Basic Auth 密码 → 认证代理 → DSH RPC（`POST /api/<method>`，`client-request` 格式）
-
-静态文件每请求读盘：直接替换 `lib/mobile/` 下的文件即生效，无需重装插件。
+手机端通过官方 UI 的移动适配访问（`/mobile` 入口现 302 → 官方 UI，配合注入的移动适配 CSS；自研独立移动 UI 已废弃，`lib/mobile/` 不再存在）。手机浏览器直接打开隧道地址即可，无需单独入口。
 
 ## 原理
 
@@ -63,11 +56,13 @@ npx @deepseek-ai/dsh web --trusted-host dsh.remote
 - id: mobile-remote
   name: '<包名>'
   config:
-    proxyPort: 8082        # 认证代理对外端口
+    proxyPort: 8082        # 认证代理监听端口（仅本机回环 127.0.0.1）
     upstreamPort: 3080     # DSH web 实际端口（DSH 默认 3080；DSH 换端口时同步改这里）
     tunnelEnabled: true    # 是否启动隧道
     passwordFile: ~        # 密码文件路径（缺省 ~/.dsh/mobile-remote.auth）
     cloudflaredPath: ~     # cloudflared 路径（缺省自动探测 PATH + winget 安装位）
+    user: ~                # 固定用户名（缺省 dsh）
+    password: ~            # 固定密码（显式配置时不再自动生成；至少 8 位，空/弱密码启动报错）
 ```
 
 ## 依赖

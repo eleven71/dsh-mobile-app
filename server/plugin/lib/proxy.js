@@ -257,7 +257,7 @@ export function createAuthProxy({ port, upstreamPort, user = 'dsh', password, on
       return
     }
     recordSuccess(ip)
-    if (req.url.startsWith('/mobile')) {
+    if (req.url === '/mobile' || req.url.startsWith('/mobile/')) {
       socket.write('HTTP/1.1 404 Not Found\r\n\r\n')
       socket.destroy()
       return
